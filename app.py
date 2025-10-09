@@ -1,287 +1,195 @@
 import streamlit as st
-import json
-import re
-from datetime import datetime, timezone
 import os
 import html
-import base64
-from typing import List, Optional
+from datetime import datetime, timezone
+from metadata import generate_metadata
+from schema_Generator import generate_schema, schema_correction
 
-# local modules
-from query_Generator import generate_and_send
-from script_Runner import extract_code_blocks, run_python_code
-from result_Summarizer import summarize_execution_results
+st.set_page_config(page_title="Schema Builder Assistant", layout="wide")
 
-# --- Page config ---
-st.set_page_config(page_title="Mini Chat UI", layout="wide")
-
-# --- Sidebar UI ---
+# ------------------------- SIDEBAR -------------------------
 with st.sidebar:
-    st.markdown("<div class='sidebar-title'>Mini Chat UI</div>", unsafe_allow_html=True)
-    st.caption("A small Streamlit page that mimics a chat layout")
-    model_options = ["gemini-2.5-flash"]
-    model = st.selectbox("Model (fixed)", model_options, index=0)
-    st.session_state.selected_model = "gemini-2.5-flash"
-    temp = st.slider("Temperature", 0.0, 1.0, 0.2)
-    
-    st.write("---")
-    if st.button("Clear conversation"):
-        st.session_state.history = []
-    
-    st.write("---")
-    st.markdown("Export or download")
-    if st.button("Export JSON"):
-        data = json.dumps(st.session_state.get("history", []), indent=2)
-        st.download_button("Download conversation (JSON)", data, file_name="conversation.json", mime="application/json")
-    
-    allow_code_execution = st.checkbox("Allow executing generated Python code (unsafe)", value=True)
+    st.markdown("### Schema Builder Assistant")
+    st.caption("Upload CSVs or provide a SharePoint link to generate schema automatically.")
+    if st.button("Open Schema Chat"):
+        st.session_state.show_schema_chat = True
 
-# --- Session state setup ---
-if "history" not in st.session_state:
-    st.session_state.history = [
+# ------------------------- SESSION STATE -------------------------
+if "show_schema_chat" not in st.session_state:
+    st.session_state.show_schema_chat = False
+
+if "schema_chat_history" not in st.session_state:
+    st.session_state.schema_chat_history = [
         {
             "role": "assistant",
-            "text": "Hello — this is a mini Chat UI. Type something below to start.",
+            "text": "Hi! Upload your CSVs or paste a SharePoint link to get started.",
             "time": datetime.now(timezone.utc).isoformat()
         }
     ]
 
-# --- Function to add a message ---
-def add_message(role: str, text: str):
-    st.session_state.history.append({
+if "general_chat_history" not in st.session_state:
+    st.session_state.general_chat_history = [
+        {
+            "role": "assistant",
+            "text": "Welcome! This is your general assistant chat.",
+            "time": datetime.now(timezone.utc).isoformat()
+        }
+    ]
+
+if "latest_schema_png" not in st.session_state:
+    st.session_state.latest_schema_png = None
+
+
+# ------------------------- HELPER FUNCTIONS -------------------------
+def add_msg(history_key, role, text):
+    """Append a chat message to session history."""
+    st.session_state[history_key].append({
         "role": role,
         "text": text,
         "time": datetime.utcnow().isoformat()
     })
 
 
-def _handle_user_query(user_text: str, model_name: str, temperature: float, allow_exec: bool):
+def handle_user_upload(uploaded_files):
+    """Save uploaded CSVs into a local Run_Space directory."""
+    if not os.path.exists("Run_Space"):
+        os.makedirs("Run_Space")
+
+    for file in uploaded_files:
+        file_path = os.path.join("Run_Space", file.name)
+        with open(file_path, "wb") as f:
+            f.write(file.getbuffer())
+    return "Run_Space"
+
+
+def process_source(source):
+    """Run metadata and schema generation from a given source."""
+    add_msg("schema_chat_history", "assistant", "Generating metadata and schema...")
     try:
-        assistant_text = generate_and_send(user_text, model=model_name, temperature=temperature)
+        generate_metadata(source)
+        add_msg("schema_chat_history", "assistant", "✅ Metadata generated successfully.")
+        generate_schema()
+        add_msg("schema_chat_history", "assistant", "✅ Schema generated successfully.")
+
+        schema_png = os.path.join("Run_Space", "relationship_schema.png")
+        if os.path.exists(schema_png):
+            st.session_state.latest_schema_png = schema_png
+            add_msg("schema_chat_history", "assistant", "Schema image is ready below.")
+        else:
+            add_msg("schema_chat_history", "assistant", "⚠️ Schema image not found after generation.")
     except Exception as e:
-        assistant_text = f"[Error calling generation: {e}]"
-    # store the raw assistant text in history, but we'll replace the visible assistant message
-    # with a human-friendly summary. Keep the raw details in session_state for the hidden expander.
-    add_message("assistant", assistant_text)
+        add_msg("schema_chat_history", "assistant", f"❌ Error during generation: {e}")
 
-    # extract code blocks
-    blocks = extract_code_blocks(assistant_text)
-    exec_results = []
-    raw_details = {"assistant_text": assistant_text, "blocks": blocks, "exec_results": []}
 
-    if blocks and allow_exec:
-        for i, b in enumerate(blocks):
-            if b.get("language", "").lower() in ("py", "python", "python3", ""):
-                res = run_python_code(b["code"]) 
-                exec_results.append({"block_index": i, "result": res})
-                raw_details["exec_results"].append({"block_index": i, "result": res})
-            else:
-                raw_details["exec_results"].append({"block_index": i, "skipped": True, "language": b.get("language")})
-    elif blocks and not allow_exec:
-        raw_details["note"] = "Code blocks detected but execution is disabled in sidebar"
+# ------------------------- MAIN INTERFACE -------------------------
+if st.session_state.show_schema_chat:
+    st.markdown("## 🧠 Schema Chat")
 
-    # Ask the summarizer to produce a plain-language explanation of the exec results
-    try:
-        summary = summarize_execution_results(exec_results, blocks, user_text, model=model_name, temperature=temperature)
-    except Exception as e:
-        summary = f"[Error creating human-friendly summary: {e}]"
-
-    # Replace the last assistant entry's visible text with the summary, but keep raw details stored
-    # in session_state under a unique key so the UI can show it in a hidden expander if requested.
-    # Attach a small metadata id to link summary <-> raw details (use timestamp)
-    import time
-    meta_id = str(int(time.time() * 1000))
-    # update the last assistant message to the summary text with meta id appended invisibly
-    st.session_state.history[-1]["text"] = f"{summary}\n\n[RAW_ID:{meta_id}]"
-
-    if "raw_results" not in st.session_state:
-        st.session_state.raw_results = {}
-    st.session_state.raw_results[meta_id] = raw_details
-
-    return summary, blocks, exec_results
-
-# --- Custom CSS ---
-st.markdown(
-    f"""
-    <style>
-    .msg {{
-        padding: 10px;
-        margin-bottom: 1px;
-        border-radius: 10px;
-        max-width: 75%;
-        word-wrap: break-word;
-        display: flex;
-        flex-direction: column;
-    }}
-    .user {{
-        background-color: #7dd3fc;
-        color: #012;
-        margin-left: auto;
-    }}
-    .assistant {{
-        background-color: #e5e7eb;
-        color: #111;
-        margin-right: auto;
-    }}
-    .meta {{
-        font-size: 0.75rem;
-        color: #6b7280;
-        margin-bottom: 4px;
-    }}
-    .sidebar-title {{
-        font-weight: bold;
-        font-size: 1.1rem;
-    }}
-    </style>
-    """,
-    unsafe_allow_html=True
-)
-
-# --- Conversation Header ---
-st.markdown("## Conversation")
-
-# --- Chat History Rendering ---
-chat_box = st.container()
-with chat_box:
-    code_block_re = re.compile(r"```(?:([a-zA-Z0-9_+-]+)\n)?(.*?)```", re.S)
-
-    def _render_message_as_html(role: str, text: str, time_str: str, inline_images: Optional[List[str]] = None) -> str:
-        """Return a single HTML string for the message bubble. Converts ```code``` blocks to
-        <pre><code> with proper HTML escaping so the entire content stays inside the bubble.
-        """
-        who = "You" if role == "user" else "Assistant"
-
-        def _code_repl(m: re.Match) -> str:
-            lang = m.group(1) or "python"
-            code = html.escape(m.group(2))
-            return f"<pre><code class='lang-{lang}'>{code}</code></pre>"
-        # Remove RAW_ID token from visible text so it doesn't display
-        body_text = re.sub(r"\[RAW_ID:\d+\]", "", text).strip()
-        # Replace code fences with escaped <pre><code>
-        body = code_block_re.sub(_code_repl, body_text)
-
-        # Escape any remaining text that wasn't inside a code block
-        # To avoid double-escaping code, only escape text outside code tags by splitting on our inserted tags.
-        parts = re.split(r"(<pre><code class='lang-[^']+'>.*?</code></pre>)", body, flags=re.S)
-        out_parts = []
-        for part in parts:
-            if part.startswith("<pre><code"):
-                out_parts.append(part)
-            else:
-                out_parts.append(html.escape(part).replace('\n', '<br/>'))
-        body_html = ''.join(out_parts)
-
-        # If inline images are provided, embed them as base64 <img> tags inside the bubble
-        if inline_images:
-            for img_path in inline_images:
-                try:
-                    with open(img_path, 'rb') as f:
-                        b = f.read()
-                    b64 = base64.b64encode(b).decode('ascii')
-                    # try to infer mime type from extension
-                    ext = os.path.splitext(img_path)[1].lower()
-                    mime = 'image/png'
-                    if ext in ('.jpg', '.jpeg'):
-                        mime = 'image/jpeg'
-                    elif ext == '.gif':
-                        mime = 'image/gif'
-                    elif ext == '.svg':
-                        mime = 'image/svg+xml'
-                    img_tag = f"<div style='margin-top:8px'><img src=\"data:{mime};base64,{b64}\" style=\"max-width:100%;height:auto;border-radius:6px;\"/></div>"
-                    body_html += img_tag
-                except Exception:
-                    # ignore image embedding failures and continue
-                    pass
-
-        cls = 'user' if role == 'user' else 'assistant'
-        return f"<div class='msg {cls}'><div class='meta'>{who} • {time_str}</div>{body_html}</div>"
-
-    for msg in st.session_state.history:
+    # Display chat history
+    for msg in st.session_state.schema_chat_history:
         role = msg["role"]
-        text = msg["text"]
-        time = datetime.fromisoformat(msg["time"]).strftime("%H:%M:%S")
+        who = "You" if role == "user" else "Assistant"
+        color = "#dbeafe" if role == "user" else "#f3f4f6"
+        st.markdown(
+            f"""
+            <div style='background-color:{color};border-radius:10px;padding:8px;margin:4px 0;'>
+                <b>{who}</b><br>{html.escape(msg["text"]).replace("\n", "<br>")}
+            </div>
+            """,
+            unsafe_allow_html=True
+        )
 
-        # For assistant messages, gather inline images from raw exec results if available
-        inline_imgs = []
-        if role != "user":
-            raw_id_m = re.search(r"\[RAW_ID:(\d+)\]", text)
-            if raw_id_m:
-                rid = raw_id_m.group(1)
-                raw = st.session_state.get("raw_results", {}).get(rid)
-                if raw:
-                    # gather image files created during execution (from exec_results)
-                    for e in raw.get('exec_results', []):
-                        res = e.get('result') or {}
-                        for p in res.get('files', []) or []:
-                            try:
-                                name = os.path.basename(p)
-                            except Exception:
-                                name = str(p)
-                            candidate = os.path.join(os.path.dirname(__file__), "Run_Space", name)
-                            if os.path.isfile(candidate) and name.lower().endswith(('.png', '.jpg', '.jpeg', '.gif', '.svg')):
-                                inline_imgs.append(candidate)
+    # Display schema image if exists
+    if st.session_state.latest_schema_png and os.path.exists(st.session_state.latest_schema_png):
+        st.markdown("<div style='text-align:center;'>", unsafe_allow_html=True)
+        st.image(st.session_state.latest_schema_png, caption="Generated Relationship Schema", width=350)
+        st.markdown("</div>", unsafe_allow_html=True)
 
-        # Render the whole message as one HTML block so other Streamlit elements don't break out of it
-        html_block = _render_message_as_html(role, text, time, inline_images=inline_imgs if inline_imgs else None)
-        st.markdown(html_block, unsafe_allow_html=True)
-        # For assistant messages, still provide the expander with code & exec details (unchanged)
-        if role != "user":
-            raw_id_m = re.search(r"\[RAW_ID:(\d+)\]", text)
-            if raw_id_m:
-                rid = raw_id_m.group(1)
-                raw = st.session_state.get("raw_results", {}).get(rid)
-                if raw:
-                    with st.expander("Show generated code & execution details"):
-                        blocks = raw.get("blocks", [])
-                        if blocks:
-                            st.markdown("**Code blocks:**")
-                            for i, b in enumerate(blocks):
-                                lang = b.get("language", "python") or "python"
-                                st.code(b.get("code", ""), language=lang)
+        st.markdown("### 🔧 Refine or correct the schema")
 
-                        execs = raw.get("exec_results", [])
-                        if execs:
-                            st.markdown("**Execution results:**")
-                            for e in execs:
-                                idx = e.get("block_index")
-                                res = e.get("result") or {}
-                                st.markdown(f"-- Block {idx} --")
-                                # show only stdout (hide stderr and return code per user request)
-                                st.code(res.get("stdout", "(no stdout)"), language="")
-                                # show produced filenames and images if present in Run_Space
-                                files = res.get('files') or []
-                                if files:
-                                    st.markdown("**Produced files (names):**")
-                                    rs_path = os.path.join(os.path.dirname(__file__), "Run_Space")
-                                    for p in files:
-                                        try:
-                                            name = os.path.basename(p)
-                                        except Exception:
-                                            name = str(p)
-                                        st.markdown(f"- {name}")
-                                        candidate = os.path.join(rs_path, name)
-                                        if os.path.isfile(candidate) and name.lower().endswith(('.png', '.jpg', '.jpeg', '.gif', '.svg')):
-                                            try:
-                                                st.image(candidate, caption=name)
-                                            except Exception:
-                                                pass
+        # Persistent correction input key
+        correction_input = st.text_input(
+            "Describe corrections (start with 'yes' or 'no'):",
+            key="correction_input_field"
+        )
 
-# --- User Input ---
-user_input = st.chat_input("Type a message...")
+        if st.button("Submit Correction", key="submit_correction_btn"):
+            if correction_input.strip():
+                add_msg("schema_chat_history", "user", correction_input)
 
-# --- Handle Input ---
-if user_input:
-    # Save the message immediately and rerun
-    add_message("user", user_input)
-    st.session_state.pending_query = user_input
-    st.rerun()
+                try:
+                    result = schema_correction(correction_input)
+                    add_msg("schema_chat_history", "assistant", f"Correction processed: {result}")
 
-# After rerun, check if we have a pending query
-if "pending_query" in st.session_state:
-    query = st.session_state.pop("pending_query")
-    selected = st.session_state.get("selected_model", model)
-    assistant_text, blocks, exec_results = _handle_user_query(query, selected, temp, allow_code_execution)
-    st.rerun()
+                    # If correction requires regeneration (user said "no")
+                    if correction_input.lower().startswith("no"):
+                        schema_correction(correction_input)
+                        png_path = os.path.join("Run_Space", "relationship_schema.png")
+                        if os.path.exists(png_path):
+                            st.session_state.latest_schema_png = png_path
+                            add_msg("schema_chat_history", "assistant", "🔄 Updated schema generated successfully.")
+                        else:
+                            add_msg("schema_chat_history", "assistant", "⚠️ Could not find regenerated schema image.")
 
-# --- Footer ---
-st.caption("Built with Streamlit — lightweight chat UI demo")
+                    elif correction_input.lower().startswith("yes"):
+                        add_msg("schema_chat_history", "assistant", "✅ Schema confirmed as correct.")
+                    else:
+                        add_msg("schema_chat_history", "assistant", "⚠️ Please start your response with 'yes' or 'no'.")
+
+                except Exception as e:
+                    add_msg("schema_chat_history", "assistant", f"❌ Error during schema correction: {e}")
+
+                # Rerun to update chat immediately
+                st.rerun()
+            else:
+                add_msg("schema_chat_history", "assistant", "⚠️ Please enter a correction message before submitting.")
+                st.rerun()
+
+    else:
+        st.markdown("### 📂 Upload your data source")
+
+        uploaded_files = st.file_uploader("Upload CSV file(s)", type=["csv"], accept_multiple_files=True)
+        sharepoint_link = st.text_input("Or paste your SharePoint CSV link:")
+
+        if st.button("Generate Schema", key="generate_schema_btn"):
+            if uploaded_files:
+                add_msg("schema_chat_history", "user", f"Uploaded {len(uploaded_files)} CSV file(s).")
+                source = handle_user_upload(uploaded_files)
+                process_source(source)
+            elif sharepoint_link.strip():
+                add_msg("schema_chat_history", "user", f"Provided SharePoint link: {sharepoint_link.strip()}")
+                process_source(sharepoint_link.strip())
+            else:
+                add_msg("schema_chat_history", "assistant", "⚠️ Please upload CSVs or provide a SharePoint link first.")
+            st.rerun()
+
+    if st.button("Back to General Chat", key="back_general_chat"):
+        st.session_state.show_schema_chat = False
+        st.rerun()
+
+else:
+    st.markdown("## 💬 General Chat")
+
+    for msg in st.session_state.general_chat_history:
+        role = msg["role"]
+        who = "You" if role == "user" else "Assistant"
+        color = "#bbf7d0" if role == "user" else "#f8fafc"
+        st.markdown(
+            f"""
+            <div style='background-color:{color};border-radius:10px;padding:8px;margin:4px 0;'>
+                <b>{who}</b><br>{html.escape(msg["text"]).replace("\n", "<br>")}
+            </div>
+            """,
+            unsafe_allow_html=True
+        )
+
+    user_input = st.text_input("Type your message here:", key="general_input_field")
+    if st.button("Send", key="general_send_btn"):
+        if user_input.strip():
+            add_msg("general_chat_history", "user", user_input)
+            add_msg("general_chat_history", "assistant", f"You said: '{user_input}'.")
+            st.rerun()
+
+    st.caption("This is your general chat. Use the sidebar to switch to Schema Chat.")
+
+st.caption("🧩 Built with Streamlit — interactive chat-driven schema builder.")
