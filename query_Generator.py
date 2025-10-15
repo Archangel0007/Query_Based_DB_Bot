@@ -2,35 +2,12 @@ import json
 import os
 from dotenv import load_dotenv
 import google as genai
-
+from gemini_Call import api_call
 load_dotenv()
 API_KEY = os.getenv("GEMINI_API_KEY")
 if not API_KEY:
     raise RuntimeError("❌ No GEMINI_API_KEY found in .env file")
 genai.configure(api_key=API_KEY)
-
-
-def call_gemini(prompt, model="gemini-1.5-pro-latest", temperature=0.0, max_output_tokens=8192):
-    """Calls the Gemini API using the google.generativeai client."""
-    try:
-        model_instance = genai.GenerativeModel(
-            model_name=model,
-            generation_config={
-                "temperature": temperature,
-                "max_output_tokens": max_output_tokens
-            }
-        )
-        response = model_instance.generate_content(prompt)
-        # Using .text is simpler and safer than parsing the raw response object
-        py_code = response.text.strip()
-        # Clean up markdown fences if the model includes them
-        if py_code.startswith("```python"):
-            py_code = py_code[len("```python"):].strip()
-        if py_code.endswith("```"):
-            py_code = py_code[:-len("```")].strip()
-        return py_code
-    except Exception as e:
-        raise RuntimeError(f"Gemini API error: {e}")
 
 
 def generate_supabase_script(metadata_file="Run_Space/metadata.json",
@@ -124,7 +101,7 @@ Return only a Python script that is fully executable as a single file. Do not in
 """
 
     print("⏳ Generating Python script with Gemini (REST API)...")
-    py_code = call_gemini(prompt, model=model)
+    py_code = api_call(prompt, model=model)
 
     with open(output_file, "w") as f:
         f.write(py_code.strip())

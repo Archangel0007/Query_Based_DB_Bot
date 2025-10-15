@@ -4,6 +4,7 @@ import logging
 from dotenv import load_dotenv
 import subprocess
 import google.generativeai as genai
+from gemini_Call import api_call
 
 # ========== PATH CONFIG ==========
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -56,22 +57,6 @@ def build_prompt(dimensional_model, schema_context):
 
     return system_instructions + "\n\n" + user_payload
 
-def call_gemini(prompt, model="gemini-2.5-flash", temperature=0.0, max_output_tokens=8192):
-    """Calls the Gemini API using the google.generativeai client."""
-    try:
-        model_instance = genai.GenerativeModel(
-            model_name=model,
-            generation_config={
-                "temperature": temperature,
-                "max_output_tokens": max_output_tokens
-            }
-        )
-        response = model_instance.generate_content(prompt)
-        return response.text.strip()
-    except Exception as e:
-        logger.error(f"Gemini API call failed: {e}")
-        raise RuntimeError(f"Gemini API error: {e}")
-
 def save_plantuml(code_text, out_path=OUTPUT_PUML):
     """Saves valid PlantUML code to a .puml file."""
     os.makedirs(os.path.dirname(out_path), exist_ok=True)
@@ -112,7 +97,7 @@ def generate_schema(schema_context):
     prompt = build_prompt(dimensional_model, schema_context)
 
     logger.info("🤖 Calling Gemini model...")
-    result_text = call_gemini(prompt)
+    result_text = api_call(prompt)
 
     logger.info("💾 Saving PlantUML output...")
     save_plantuml(result_text)
@@ -166,7 +151,7 @@ def schema_correction(user_input):
 
         prompt = system_instructions + "\n\n" + user_payload
 
-        corrected_text = call_gemini(prompt)
+        corrected_text = api_call(prompt)
         save_plantuml(corrected_text)
         render_plantuml_to_png()
         logger.info("🛠 Schema correction applied.")

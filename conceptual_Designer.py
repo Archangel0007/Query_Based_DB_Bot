@@ -3,7 +3,7 @@ import json
 import logging
 from dotenv import load_dotenv
 import google as genai
-
+from gemini_Call import api_call
 # ========== PATH CONFIG ==========
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 RNSPACE_DIR = os.path.join(BASE_DIR, "Run_Space")
@@ -16,12 +16,6 @@ OUTPUT_JSON = os.path.join(RNSPACE_DIR, "dimensional_model.json")
 logging.basicConfig(level=logging.INFO, format="[%(asctime)s] %(levelname)s: %(message)s")
 logger = logging.getLogger(__name__)
 
-# ========== ENV ==========
-load_dotenv()
-API_KEY = os.getenv("GEMINI_API_KEY")
-if not API_KEY:
-    raise RuntimeError("❌ No GEMINI_API_KEY found in .env file")
-genai.configure(api_key=API_KEY)
 
 # ========== CORE FUNCTIONS ==========
 
@@ -80,22 +74,6 @@ def build_prompt(metadata, user_context):
 
     return system_instructions + "\n\n" + user_payload
 
-def call_gemini(prompt, model="gemini-2.5-flash", temperature=0.0):
-    """Calls the Gemini API using the google.generativeai client."""
-    try:
-        model_instance = genai.GenerativeModel(
-            model_name=model,
-            generation_config={
-                "temperature": temperature,
-                "response_mime_type": "application/json"
-            }
-        )
-        response = model_instance.generate_content(prompt)
-        return response.text
-    except Exception as e:
-        logger.error(f"Gemini API call failed: {e}")
-        raise RuntimeError(f"Gemini API error: {e}")
-
 def generate_dimensional_model():
     """Main function to generate and save the dimensional model."""
     logger.info("🔍 Loading source metadata and user context...")
@@ -106,7 +84,7 @@ def generate_dimensional_model():
     prompt = build_prompt(metadata, user_context)
 
     logger.info("🤖 Calling Gemini to generate the dimensional model...")
-    result_text = call_gemini(prompt)
+    result_text = api_call(prompt)
 
     logger.info("💾 Saving dimensional model JSON...")
     try:
