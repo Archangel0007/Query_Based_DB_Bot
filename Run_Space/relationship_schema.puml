@@ -1,0 +1,191 @@
+@startuml
+hide circle
+skinparam linetype ortho
+
+entity DimCategory {
+  * categoryID : INTEGER
+  --
+  categoryName : VARCHAR
+  description : VARCHAR
+  picture : VARCHAR
+}
+
+entity DimCustomer {
+  * customerID : VARCHAR
+  --
+  companyName : VARCHAR
+  contactName : VARCHAR
+  contactTitle : VARCHAR
+  address : VARCHAR
+  city : VARCHAR
+  region : VARCHAR
+  postalCode : VARCHAR
+  country : VARCHAR
+  phone : VARCHAR
+  fax : VARCHAR
+}
+
+entity DimEmployee {
+  * employeeID : INTEGER
+  --
+  lastName : VARCHAR
+  firstName : VARCHAR
+  title : VARCHAR
+  titleOfCourtesy : VARCHAR
+  birthDate : TIMESTAMP
+  hireDate : TIMESTAMP
+  address : VARCHAR
+  city : VARCHAR
+  region : VARCHAR
+  postalCode : VARCHAR
+  country : VARCHAR
+  homePhone : VARCHAR
+  extension : INTEGER
+  photo : VARCHAR
+  notes : VARCHAR
+  # reportsTo : INTEGER <<FK>>
+  photoPath : VARCHAR
+}
+
+entity FactEmployeeTerritory {
+  * employeeID : INTEGER <<FK>>
+  * territoryID : INTEGER <<FK>>
+}
+
+entity FactSalesOrderDetail {
+  * orderID : INTEGER <<FK>>
+  * productID : INTEGER <<FK>>
+  --
+  unitPrice : DECIMAL
+  quantity : INTEGER
+  discount : DECIMAL
+}
+
+entity FactSalesOrderDetailFresh {
+  * orderID : INTEGER <<FK>>
+  * productID : INTEGER <<FK>>
+  --
+  unitPrice : DECIMAL
+  quantity : INTEGER
+  discount : DECIMAL
+}
+
+entity FactOrderHeader {
+  * orderID : INTEGER
+  --
+  # customerID : VARCHAR <<FK>>
+  # employeeID : INTEGER <<FK>>
+  orderDate : TIMESTAMP
+  requiredDate : TIMESTAMP
+  shippedDate : TIMESTAMP
+  # shipVia : INTEGER <<FK>>
+  freight : DECIMAL
+  shipName : VARCHAR
+  shipAddress : VARCHAR
+  shipCity : VARCHAR
+  shipRegion : VARCHAR
+  shipPostalCode : VARCHAR
+  shipCountry : VARCHAR
+}
+
+entity FactOrderUpdated {
+  * orderID : INTEGER
+  --
+  # customerID : VARCHAR <<FK>>
+  # employeeID : INTEGER <<FK>>
+  orderDate : TIMESTAMP
+  requiredDate : TIMESTAMP
+  shippedDate : TIMESTAMP
+  # shipVia : INTEGER <<FK>>
+  freight : DECIMAL
+  shipName : VARCHAR
+  shipAddress : VARCHAR
+  shipCity : VARCHAR
+  shipRegion : VARCHAR
+  shipPostalCode : VARCHAR
+  shipCountry : VARCHAR
+}
+
+entity DimProduct {
+  * productID : INTEGER
+  --
+  productName : VARCHAR
+  # supplierID : INTEGER <<FK>>
+  # categoryID : INTEGER <<FK>>
+  quantityPerUnit : VARCHAR
+  unitPrice : DECIMAL
+  unitsInStock : INTEGER
+  unitsOnOrder : INTEGER
+  reorderLevel : INTEGER
+  discontinued : INTEGER
+}
+
+entity DimProductFresh {
+  * "Product ID" : INTEGER
+  --
+  "Product Name" : VARCHAR
+  ListPrice : DECIMAL
+  UnitCost : DECIMAL
+  Discontinued : VARCHAR
+  CategoryName : VARCHAR
+  Supplier : VARCHAR
+}
+
+entity DimRegion {
+  * regionID : INTEGER
+  --
+  regionDescription : VARCHAR
+}
+
+entity DimShipper {
+  * shipperID : INTEGER
+  --
+  companyName : VARCHAR
+  phone : VARCHAR
+}
+
+entity DimSupplier {
+  * supplierID : INTEGER
+  --
+  companyName : VARCHAR
+  contactName : VARCHAR
+  contactTitle : VARCHAR
+  address : VARCHAR
+  city : VARCHAR
+  region : VARCHAR
+  postalCode : VARCHAR
+  country : VARCHAR
+  phone : VARCHAR
+  fax : VARCHAR
+  homePage : VARCHAR
+}
+
+entity DimTerritory {
+  * territoryID : INTEGER
+  --
+  territoryDescription : VARCHAR
+  # regionID : INTEGER <<FK>>
+}
+
+DimCategory ||--o{ DimProduct : "has"
+DimSupplier ||--o{ DimProduct : "supplies"
+DimProduct ||--o{ FactSalesOrderDetail : "is part of"
+DimProduct ||--o{ FactSalesOrderDetailFresh : "is part of (fresh)"
+
+DimCustomer ||--o{ FactOrderHeader : "places"
+DimEmployee ||--o{ FactOrderHeader : "handles"
+DimShipper ||--o{ FactOrderHeader : "ships via"
+FactOrderHeader ||--o{ FactSalesOrderDetail : "includes"
+FactOrderHeader ||--o{ FactSalesOrderDetailFresh : "includes (fresh)"
+
+DimCustomer ||--o{ FactOrderUpdated : "places (updated)"
+DimEmployee ||--o{ FactOrderUpdated : "handles (updated)"
+DimShipper ||--o{ FactOrderUpdated : "ships via (updated)"
+
+DimEmployee ||--o{ DimEmployee : "reports to"
+
+DimEmployee ||--o{ FactEmployeeTerritory : "assigned to"
+DimTerritory ||--o{ FactEmployeeTerritory : "has assigned employees"
+
+DimRegion ||--o{ DimTerritory : "contains"
+@enduml

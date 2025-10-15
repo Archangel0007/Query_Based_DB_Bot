@@ -2,15 +2,15 @@ import os
 import json
 import logging
 from dotenv import load_dotenv
-import requests
 import subprocess
+import google.generativeai as genai
 
 # ========== PATH CONFIG ==========
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 PLANTUML_JAR = os.path.join(BASE_DIR, "plantuml.jar")
 RNSPACE_DIR = os.path.join(BASE_DIR, "Run_Space")
 
-METADATA_FILE = os.path.join(RNSPACE_DIR, "metadata.json")
+DIMENSIONAL_MODEL_FILE = os.path.join(RNSPACE_DIR, "dimensional_model.json")
 OUTPUT_PUML = os.path.join(RNSPACE_DIR, "relationship_schema.puml")
 OUTPUT_PNG = os.path.join(RNSPACE_DIR, "relationship_schema.png")
 
@@ -23,61 +23,53 @@ load_dotenv()
 API_KEY = os.getenv("GEMINI_API_KEY")
 if not API_KEY:
     raise RuntimeError("❌ No GEMINI_API_KEY found in .env file")
+genai.configure(api_key=API_KEY)
 
 # ========== CORE FUNCTIONS ==========
 
-def load_metadata(path=METADATA_FILE):
-    """Load metadata.json."""
+def load_dimensional_model(path=DIMENSIONAL_MODEL_FILE):
+    """Load dimensional_model.json."""
     if not os.path.exists(path):
-        raise FileNotFoundError(f"❌ metadata.json not found at {path}")
+        raise FileNotFoundError(f"❌ dimensional_model.json not found at {path}")
     with open(path, "r", encoding="utf-8") as f:
         return json.load(f)
 
-def build_prompt(metadata):
-    """Builds a structured Gemini prompt from metadata."""
+def build_prompt(dimensional_model, schema_context):
+    """Builds a structured Gemini prompt from the dimensional model."""
     system_instructions = (
         """You are a precise data architect assistant. 
-        Given metadata about database tables and their columns, 
-        infer reasonable primary keys, foreign keys, and relationships. 
+        Given a suggested Model/ Table information in the form of JSON,from the user provided external context and metadata of the orginal data , infer the relationships (primary keys and foreign keys) between them. 
         Output ONLY a PlantUML ER diagram (no prose). 
         Follow strict PlantUML ER syntax with @startuml ... @enduml. 
         Mark cardinalities (1--N, N--N, 1--1) clearly using PlantUML conventions. 
-        If you infer associative (join) tables, include them explicitly."""
+        Do not include any explanations or text outside of the UML code."""
     )
 
+    context_instructions = f"\n\nUse this additional context provided by the user to guide your schema design:\n---USER CONTEXT---\n{schema_context}\n---END USER CONTEXT---"
+
     user_payload = (
-        "Here is the metadata JSON for the tables:\n"
-        + json.dumps(metadata, indent=2)
-        + "\n\nOutput only the PlantUML ER diagram code."
+        "Here is the JSON for the suggested table:\n"
+        + json.dumps(dimensional_model, indent=2)
+        + context_instructions
+        + "\n\n Output only the PlantUML ER diagram code based on the metadata and the provided context."
     )
 
     return system_instructions + "\n\n" + user_payload
 
-def call_gemini(prompt, model="gemini-2.5-flash", temperature=0.0, max_output_tokens=4000):
-    """Calls Gemini API (REST) and returns the generated text."""
-    endpoint = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent"
-    body = {
-        "contents": [{"role": "user", "parts": [{"text": prompt}]}],
-        "generationConfig": {
-            "temperature": temperature,
-            "maxOutputTokens": max_output_tokens
-        },
-    }
-
+def call_gemini(prompt, model="gemini-2.5-flash", temperature=0.0, max_output_tokens=8192):
+    """Calls the Gemini API using the google.generativeai client."""
     try:
-        resp = requests.post(endpoint, params={"key": API_KEY}, json=body, timeout=60)
-        if resp.status_code != 200:
-            raise RuntimeError(f"Gemini API error {resp.status_code}: {resp.text}")
-
-        data = resp.json()
-        candidates = data.get("candidates", [])
-        if candidates:
-            parts = candidates[0].get("content", {}).get("parts", [])
-            if parts and "text" in parts[0]:
-                return parts[0]["text"].strip()
-        return json.dumps(data, indent=2)
-
+        model_instance = genai.GenerativeModel(
+            model_name=model,
+            generation_config={
+                "temperature": temperature,
+                "max_output_tokens": max_output_tokens
+            }
+        )
+        response = model_instance.generate_content(prompt)
+        return response.text.strip()
     except Exception as e:
+        logger.error(f"Gemini API call failed: {e}")
         raise RuntimeError(f"Gemini API error: {e}")
 
 def save_plantuml(code_text, out_path=OUTPUT_PUML):
@@ -111,13 +103,13 @@ def render_plantuml_to_png(puml_path=OUTPUT_PUML):
     logger.info(f"🖼 PNG generated: {OUTPUT_PNG}")
     return OUTPUT_PNG
 
-def generate_schema():
-    """Generates a PlantUML ER diagram from metadata.json using Gemini API."""
-    logger.info("🔍 Loading metadata...")
-    metadata = load_metadata()
+def generate_schema(schema_context):
+    """Generates a PlantUML ER diagram from dimensional_model.json using Gemini API."""
+    logger.info("🔍 Loading dimensional model...")
+    dimensional_model = load_dimensional_model()
 
     logger.info("✍️ Building prompt...")
-    prompt = build_prompt(metadata)
+    prompt = build_prompt(dimensional_model, schema_context)
 
     logger.info("🤖 Calling Gemini model...")
     result_text = call_gemini(prompt)
@@ -185,4 +177,7 @@ def schema_correction(user_input):
 
 # ========== ENTRY POINT ==========
 if __name__ == "__main__":
-    generate_schema()
+    # Example of running with context. In the app, this is passed from the UI.
+    user_context = "The 'orders' table links to 'customers' via customerID. Each order can have multiple 'order_details'."
+    generate_schema(schema_context=user_context)
+    # generate_schema() # This will now raise an error as schema_context is required.

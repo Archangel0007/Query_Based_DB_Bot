@@ -1,8 +1,10 @@
 import streamlit as st
 import os
 import html
+import subprocess
 from datetime import datetime, timezone
-from metadata import generate_metadata
+from metadata import generate_metadata 
+from conceptual_Designer import generate_dimensional_model
 from schema_Generator import generate_schema, schema_correction
 
 st.set_page_config(page_title="Schema Builder Assistant", layout="wide")
@@ -39,6 +41,12 @@ if "general_chat_history" not in st.session_state:
 if "latest_schema_png" not in st.session_state:
     st.session_state.latest_schema_png = None
 
+if "schema_confirmed" not in st.session_state:
+    st.session_state.schema_confirmed = False
+
+if "model_generated" not in st.session_state:
+    st.session_state.model_generated = False
+
 
 # ------------------------- HELPER FUNCTIONS -------------------------
 def add_msg(history_key, role, text):
@@ -62,26 +70,36 @@ def handle_user_upload(uploaded_files):
     return "Run_Space"
 
 
-def process_source(source):
-    """Run metadata and schema generation from a given source."""
-    add_msg("schema_chat_history", "assistant", "Generating metadata and schema...")
+def process_source(source, context_text):
+    """Run metadata and dimensional model generation from a given source."""
+    add_msg("schema_chat_history", "assistant", "Generating metadata and dimensional model...")
     try:
         generate_metadata(source)
-        add_msg("schema_chat_history", "assistant", "✅ Metadata generated successfully.")
-        generate_schema()
-        add_msg("schema_chat_history", "assistant", "✅ Schema generated successfully.")
+        add_msg("schema_chat_history", "assistant", "✅ Metadata extracted from source files.")
 
-        schema_png = os.path.join("Run_Space", "relationship_schema.png")
-        if os.path.exists(schema_png):
-            st.session_state.latest_schema_png = schema_png
-            add_msg("schema_chat_history", "assistant", "Schema image is ready below.")
-        else:
-            add_msg("schema_chat_history", "assistant", "⚠️ Schema image not found after generation.")
+        # Save the context to the file expected by the dimensional modeler
+        context_file_path = os.path.join("Run_Space", "refined_User_Query.txt")
+        with open(context_file_path, "w", encoding="utf-8") as f:
+            f.write(context_text)
+
+        generate_dimensional_model()
+        output_json_path = os.path.join("Run_Space", "dimensional_model.json")
+        if os.path.exists(output_json_path):
+            add_msg("schema_chat_history", "assistant", f"✅ Dimensional model generated successfully.")
+            st.session_state.model_generated = True
+
+            # Now, generate the visual schema
+            add_msg("schema_chat_history", "assistant", "🎨 Generating visual schema diagram...")
+            png_path = generate_schema(schema_context=context_text)
+            st.session_state.latest_schema_png = png_path
+            add_msg("schema_chat_history", "assistant", "✅ Visual schema generated. Please review it below.")
     except Exception as e:
-        add_msg("schema_chat_history", "assistant", f"❌ Error during generation: {e}")
+        add_msg("schema_chat_history", "assistant", f"❌ Error during generation: {e}") 
 
 
 # ------------------------- MAIN INTERFACE -------------------------
+
+
 if st.session_state.show_schema_chat:
     st.markdown("## 🧠 Schema Chat")
 
@@ -99,68 +117,63 @@ if st.session_state.show_schema_chat:
             unsafe_allow_html=True
         )
 
-    # Display schema image if exists
-    if st.session_state.latest_schema_png and os.path.exists(st.session_state.latest_schema_png):
-        st.markdown("<div style='text-align:center;'>", unsafe_allow_html=True)
-        st.image(st.session_state.latest_schema_png, caption="Generated Relationship Schema", width=350)
-        st.markdown("</div>", unsafe_allow_html=True)
+    # --- UI FLOW ---
 
-        st.markdown("### 🔧 Refine or correct the schema")
+    # STEP 3: Generate Supabase script after schema is confirmed
+    if st.session_state.get("schema_confirmed"):
+        st.markdown("### 🚀 Step 3: Generate Supabase Python Script")
+        if st.button("Generate Script", key="generate_script_btn"):
+            from query_Generator import generate_supabase_script
+            with st.spinner("⏳ Generating Supabase script..."):
+                try:
+                    output_file = generate_supabase_script(metadata_file="Run_Space/dimensional_model.json", plantuml_file="Run_Space/relationship_schema.puml")
+                    add_msg("schema_chat_history", "assistant", f"✅ Python script generated: {output_file}")
+                    st.success(f"✅ Python script generated: {output_file}")
+                except Exception as e:
+                    add_msg("schema_chat_history", "assistant", f"❌ Error generating script: {e}")
+                    st.error(f"❌ Error generating script: {e}")
+            st.rerun()
 
-        # Persistent correction input key
-        correction_input = st.text_input(
-            "Describe corrections (start with 'yes' or 'no'):",
-            key="correction_input_field"
-        )
-
-        if st.button("Submit Correction", key="submit_correction_btn"):
+    # STEP 2: Display schema and ask for confirmation/correction
+    elif st.session_state.get("model_generated"):
+        st.markdown("### 🔎 Step 2: Review and Confirm Schema")
+        if st.session_state.latest_schema_png and os.path.exists(st.session_state.latest_schema_png):
+            st.image(st.session_state.latest_schema_png, caption="Generated ER Diagram")
+        
+        correction_input = st.text_area("Is this schema correct? Type 'yes' to confirm, or 'no' followed by your corrections (e.g., 'no, change the relationship between Orders and Customers to one-to-many').", key="correction_input")
+        if st.button("Submit Feedback", key="submit_correction_btn"):
             if correction_input.strip():
                 add_msg("schema_chat_history", "user", correction_input)
+                response = schema_correction(correction_input)
+                add_msg("schema_chat_history", "assistant", response)
+                if correction_input.strip().lower() == "yes":
+                    st.session_state.schema_confirmed = True
+            st.rerun()
 
-                try:
-                    result = schema_correction(correction_input)
-                    add_msg("schema_chat_history", "assistant", f"Correction processed: {result}")
-
-                    # If correction requires regeneration (user said "no")
-                    if correction_input.lower().startswith("no"):
-                        schema_correction(correction_input)
-                        png_path = os.path.join("Run_Space", "relationship_schema.png")
-                        if os.path.exists(png_path):
-                            st.session_state.latest_schema_png = png_path
-                            add_msg("schema_chat_history", "assistant", "🔄 Updated schema generated successfully.")
-                        else:
-                            add_msg("schema_chat_history", "assistant", "⚠️ Could not find regenerated schema image.")
-
-                    elif correction_input.lower().startswith("yes"):
-                        add_msg("schema_chat_history", "assistant", "✅ Schema confirmed as correct.")
-                    else:
-                        add_msg("schema_chat_history", "assistant", "⚠️ Please start your response with 'yes' or 'no'.")
-
-                except Exception as e:
-                    add_msg("schema_chat_history", "assistant", f"❌ Error during schema correction: {e}")
-
-                # Rerun to update chat immediately
-                st.rerun()
-            else:
-                add_msg("schema_chat_history", "assistant", "⚠️ Please enter a correction message before submitting.")
-                st.rerun()
-
+    # STEP 1: Initial state - get data source and context
     else:
-        st.markdown("### 📂 Upload your data source")
-
-        uploaded_files = st.file_uploader("Upload CSV file(s)", type=["csv"], accept_multiple_files=True)
+        col1, col2 = st.columns([1, 3]) # Use columns to make the uploader less wide
+        with col1:
+            uploaded_files = st.file_uploader("Upload CSV file(s)", type=["csv"], accept_multiple_files=True, label_visibility="collapsed")
         sharepoint_link = st.text_input("Or paste your SharePoint CSV link:")
+        schema_context = st.text_area("Provide context about your schema (required):",
+                                      help="Describe relationships, primary keys, or business logic. E.g., 'A customer can have many orders. An order belongs to one customer.'")
 
-        if st.button("Generate Schema", key="generate_schema_btn"):
-            if uploaded_files:
-                add_msg("schema_chat_history", "user", f"Uploaded {len(uploaded_files)} CSV file(s).")
-                source = handle_user_upload(uploaded_files)
-                process_source(source)
-            elif sharepoint_link.strip():
-                add_msg("schema_chat_history", "user", f"Provided SharePoint link: {sharepoint_link.strip()}")
-                process_source(sharepoint_link.strip())
+        if st.button("Generate Dimensional Model", key="generate_model_btn"):
+            source_provided = uploaded_files or sharepoint_link.strip()
+            context_provided = schema_context.strip()
+
+            if source_provided and context_provided:
+                if uploaded_files:
+                    add_msg("schema_chat_history", "user", f"Uploaded {len(uploaded_files)} CSV file(s).")
+                    source = handle_user_upload(uploaded_files)
+                else:
+                    source = sharepoint_link.strip()
+                    add_msg("schema_chat_history", "user", f"Provided SharePoint link: {source}")
+                add_msg("schema_chat_history", "user", f"Context: {context_provided}")
+                process_source(source, context_text=context_provided)
             else:
-                add_msg("schema_chat_history", "assistant", "⚠️ Please upload CSVs or provide a SharePoint link first.")
+                add_msg("schema_chat_history", "assistant", "⚠️ Please provide a data source (CSV or link) and the required schema context before generating.")
             st.rerun()
 
     if st.button("Back to General Chat", key="back_general_chat"):
@@ -169,7 +182,6 @@ if st.session_state.show_schema_chat:
 
 else:
     st.markdown("## 💬 General Chat")
-
     for msg in st.session_state.general_chat_history:
         role = msg["role"]
         who = "You" if role == "user" else "Assistant"
@@ -191,5 +203,3 @@ else:
             st.rerun()
 
     st.caption("This is your general chat. Use the sidebar to switch to Schema Chat.")
-
-st.caption("🧩 Built with Streamlit — interactive chat-driven schema builder.")
