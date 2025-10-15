@@ -85,10 +85,11 @@ def generate_dimensional_model():
 
     logger.info("🤖 Calling Gemini to generate the dimensional model...")
     result_text = api_call(prompt)
+    result_text = result_text[7:-3].strip()
 
-    logger.info("💾 Saving dimensional model JSON...")
+    with open(OUTPUT_JSON + ".txt", "w", encoding="utf-8") as f:
+        logger.info("💾 Saving dimensional model JSON...")
     try:
-        # The API is asked for JSON, so we parse to validate and then re-serialize with indentation
         dimensional_model = json.loads(result_text)
         with open(OUTPUT_JSON, "w", encoding="utf-8") as f:
             json.dump(dimensional_model, f, indent=4)

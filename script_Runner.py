@@ -6,7 +6,7 @@ import subprocess
 import sys
 import tempfile
 from typing import List, Dict, Optional
-from query_Generator import generate_and_send
+from sql_Code_Generator import generate_and_send
 import logging
 
 # configure simple logging to stdout

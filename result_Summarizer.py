@@ -1,7 +1,7 @@
 import json
 from typing import List, Dict, Optional
 
-from query_Generator import generate_and_send
+from sql_Code_Generator import generate_and_send
 
 
 def _default_dataset_description() -> str:

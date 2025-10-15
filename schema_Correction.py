@@ -4,19 +4,11 @@ import textwrap
 import os
 import sys
 from typing import Any, Dict, List, Union
+from dotenv import load_dotenv
+import google.generativeai as genai
+import re
+from gemini_Call import api_call
 
-API_KEY = "AIzaSyAKjWW1jBGgHWWzP-WWGDV5CCdi1PnzN4I"
-
-MODEL = "gemini-2.5-flash"
-
-OUTPUT_FILE = "updated_data.puml"
-
-try:
-
-    from google import genai
-    _HAS_GENAI = True
-except Exception:
-    _HAS_GENAI = False
 
 def load_json_file(path: str) -> Any:
     with open(path, "r", encoding="utf-8") as f:
@@ -84,42 +76,12 @@ def build_prompt(errors: List[Dict[str, Any]], puml: str, query_text: str) -> st
     """).strip()
     return prompt
 
-def call_llm_with_genai(prompt: str) -> str:
-    if not _HAS_GENAI:
-        raise RuntimeError(
-            "google.genai client not available. Install `google-genai` or adapt call_llm_with_genai()."
-        )
-
-    genai_client = genai.Client(api_key=API_KEY)
-
-    print("📡 Sending prompt to Gemini model (via google.genai client)...")
-    response = genai_client.models.generate_content(model=MODEL, contents=prompt)
-
-    if hasattr(response, "text"):
-        return response.text
-    if isinstance(response, dict):
-
-        cand = response.get("candidates")
-        if isinstance(cand, list) and len(cand) > 0:
-            c0 = cand[0]
-
-            for k in ("output", "content", "message", "text"):
-                if k in c0:
-                    return c0[k]
-
-        choices = response.get("choices")
-        if isinstance(choices, list) and choices:
-            if "message" in choices[0] and "content" in choices[0]["message"]:
-                return choices[0]["message"]["content"]
-
-    return str(response)
-
 def save_output(text: str, path: str) -> None:
     with open(path, "w", encoding="utf-8") as f:
         f.write(text)
     print(f"✅ Saved corrected PlantUML to: {path}")
 
-def main(errors_path: str, puml_path: str, query_path: str, output_path: str):
+def correction(errors_path: str, puml_path: str, query_path: str):
 
     if not os.path.exists(errors_path):
         print(f"ERROR: errors file not found: {errors_path}")
@@ -139,12 +101,12 @@ def main(errors_path: str, puml_path: str, query_path: str, output_path: str):
     prompt = build_prompt(errors, puml, query_text)
 
     try:
-        corrected = call_llm_with_genai(prompt)
+        corrected = api_call(prompt)
     except Exception as e:
         print("LLM call failed:", str(e))
         print("If you don't have the google-genai client installed, run:")
         print("  pip install google-genai")
-        print("Or adapt call_llm_with_genai() to your environment.")
+        print("Or api_call() to your environment.")
         sys.exit(3)
 
     corrected = corrected.strip()
@@ -153,8 +115,8 @@ def main(errors_path: str, puml_path: str, query_path: str, output_path: str):
         if "@startuml" in puml and "@enduml" in puml:
             corrected = "@startuml\n" + corrected + "\n@enduml"
 
-    save_output(corrected, output_path)
+    save_output(corrected, puml_path)
 
 if __name__ == "__main__":
-    main("Run_Space/errors.json", "Run_Space/relationship_schema.puml", "Run_Space/refined_User_Query.txt", OUTPUT_FILE)
+    correction("Run_Space/errors.json", "Run_Space/relationship_schema.puml", "Run_Space/refined_User_Query.txt")
  

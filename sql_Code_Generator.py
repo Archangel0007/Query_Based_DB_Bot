@@ -1,19 +1,10 @@
 import json
 import os
-from dotenv import load_dotenv
-import google as genai
 from gemini_Call import api_call
-load_dotenv()
-API_KEY = os.getenv("GEMINI_API_KEY")
-if not API_KEY:
-    raise RuntimeError("❌ No GEMINI_API_KEY found in .env file")
-genai.configure(api_key=API_KEY)
-
-
-def generate_supabase_script(metadata_file="Run_Space/metadata.json",
+def generate_script(metadata_file="Run_Space/metadata.json",
                              plantuml_file="Run_Space/plantuml_code.puml",
-                             output_file="supabase_create_insert.py",
-                             model="gemini-1.5-flash-latest"):
+                             output_file="Run_Space/create_Database_Script.py",
+                             model="gemini-2.5-flash"):
     with open(metadata_file, 'r') as file:
         refined_metadata = json.load(file)
 
@@ -105,6 +96,4 @@ Return only a Python script that is fully executable as a single file. Do not in
 
     with open(output_file, "w") as f:
         f.write(py_code.strip())
-
-    print(f"✅ Python script generated and saved as {output_file}")
-    return output_file
+    print(f"✅ Python script generated and saved to: {output_file}")

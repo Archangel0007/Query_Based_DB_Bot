@@ -27,25 +27,7 @@ def api_call(prompt , model=MODEL, temperature=0.0) -> str:
 
     print("📡 Sending prompt to Gemini model (via google.genai client)...")
     response = genai_client.models.generate_content(model=model, contents=prompt)
-
-    if hasattr(response, "text"):
-        return response.text
-    if isinstance(response, dict):
-
-        cand = response.get("candidates")
-        if isinstance(cand, list) and len(cand) > 0:
-            c0 = cand[0]
-
-            for k in ("output", "content", "message", "text"):
-                if k in c0:
-                    return c0[k]
-
-        choices = response.get("choices")
-        if isinstance(choices, list) and choices:
-            if "message" in choices[0] and "content" in choices[0]["message"]:
-                return choices[0]["message"]["content"]
-
-    return str(response)
+    return response.text
 
 if __name__ == "__main__":
     test_prompt = "Hello, Gemini! Can you generate a simple JSON object for me?"
