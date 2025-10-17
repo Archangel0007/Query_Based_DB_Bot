@@ -8,7 +8,9 @@ from conceptual_Designer import generate_dimensional_model
 from schema_Generator import generate_schema, schema_correction
 from schema_Testing import run_phase1, run_phase2
 from schema_Correction import correction
-from sql_Code_Generator import generate_script
+from sql_Create_Generator import generate_create_script
+
+from script_Runner import run_python_code
 import time  
 from PIL import Image
 from query_Cleaner import clean_text
@@ -115,7 +117,7 @@ if st.session_state.show_schema_chat:
     if st.session_state.get("schema_confirmed"):
         st.markdown("### 🚀 Step 3: Generate Supabase Python Script")
         if st.button("Generate Script", key="generate_script_btn"):
-            from sql_Code_Generator import generate_supabase_script
+            from sql_Create_Generator import generate_supabase_script
             with st.spinner("⏳ Generating Supabase script..."):
                 try:
                     output_file = generate_supabase_script(metadata_file="Run_Space/dimensional_model.json", plantuml_file="Run_Space/relationship_schema.puml")
@@ -264,14 +266,23 @@ if st.session_state.show_schema_chat:
                 st.rerun()
         
             elif st.session_state.processing_step == "Code_Generation":
-                with st.spinner("\n⚙️ Generating Scripts: generating python scripts for database creation..."):
+                with st.spinner("\n⚙️ Generating Scripts: generating python scripts for Table creation..."):
                     metadata_path = os.path.join("Run_Space", "metadata.json")
                     plantuml_code_path = os.path.join("Run_Space", "relationship_schema.puml")
-                    generate_script(metadata_file=metadata_path, plantuml_file=plantuml_code_path)
+                    generate_create_script(metadata_file=metadata_path, plantuml_file=plantuml_code_path)
                 add_msg("schema_chat_history", "assistant", "✅ Code Generated.")
-                st.session_state.processing_step = "cleanup"
+                st.session_state.processing_step = "Table_Creation"
                 st.rerun()
 
+            elif st.session_state.processing_step == "Table_Creation":
+                with st.spinner("\n⚙️ Creating Tables: Running python scripts for Table creation..."):
+                    metadata_path = os.path.join("Run_Space", "metadata.json")
+                    plantuml_code_path = os.path.join("Run_Space", "relationship_schema.puml")
+                    code_path = os.path.join("Run_Space", "create_Database_Script.py")
+                    run_python_code(code=open(code_path, "r").read())
+                add_msg("schema_chat_history", "assistant", "✅ Tables created in the database.")
+                st.session_state.processing_step = "cleanup"
+                st.rerun()
             #=> continue adding states here as needed
             
             elif st.session_state.processing_step == "cleanup":

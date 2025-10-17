@@ -95,7 +95,7 @@ def run_phase2(plantuml_code_path):
     - No markdown or fences, only JSON arrays after each header.
     """
 
-    model = genai.GenerativeModel("gemini-2.5-pro")
+    model = genai.GenerativeModel("gemini-2.5-flash")
     response = model.generate_content(prompt_phase2)
     output_text = response.text.strip()
     clean_output = re.sub(r"```json|```", "", output_text, flags=re.DOTALL).strip()
