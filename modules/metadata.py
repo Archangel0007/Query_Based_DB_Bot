@@ -36,7 +36,7 @@ def generate_metadata_for_dataframe(file_name, file_path, df):
     """Generate metadata dictionary for a single CSV DataFrame."""
     metadata = {
         "file_name": os.path.splitext(file_name)[0],
-        "directory_path": file_path,
+        "directory_path": file_path.replace("\\", "/"),
         "columns": []
     }
 
@@ -51,7 +51,7 @@ def generate_metadata_for_dataframe(file_name, file_path, df):
 
     return metadata
 
-def generate_metadata(source_dir_or_url, output_path="Run_Space/metadata.json"):
+def generate_metadata(source_dir_or_url, output_path):
     """
     Main callable function.
     Scans a local directory or SharePoint CSV URL and writes metadata.json.
@@ -66,8 +66,9 @@ def generate_metadata(source_dir_or_url, output_path="Run_Space/metadata.json"):
         for csv_path in csv_files:
             try:
                 df = pd.read_csv(csv_path)
-                file_name = os.path.basename(csv_path)
-                metadata = generate_metadata_for_dataframe(file_name, csv_path, df)
+                relative_path = os.path.relpath(csv_path, source_dir_or_url)
+                file_name = os.path.basename(relative_path)
+                metadata = generate_metadata_for_dataframe(file_name, relative_path, df)
                 all_metadata.append(metadata)
             except Exception as e:
                 raise RuntimeError(f"Error reading {csv_path}: {e}")
@@ -85,16 +86,14 @@ def generate_metadata(source_dir_or_url, output_path="Run_Space/metadata.json"):
     else:
         raise ValueError("Invalid source: must be a directory path or SharePoint CSV URL")
 
-    os.makedirs(os.path.dirname(output_path), exist_ok=True)
+    # Write the metadata to the explicitly provided output_path
+    out_dir = os.path.dirname(output_path)
+    if out_dir:
+        os.makedirs(out_dir, exist_ok=True)
     with open(output_path, "w", encoding="utf-8") as f:
         json.dump(all_metadata, f, indent=4)
 
     return all_metadata
 
 if __name__ == "__main__":
-    source_path = input("Enter directory path or SharePoint CSV URL: ").strip()
-    try:
-        data = generate_metadata(source_path)
-        print("✅ Metadata has been saved to Run_Space/metadata.json")
-    except Exception as e:
-        print(f"❌ Error: {e}")
+    print("This module provides generate_metadata(source_dir_or_url, output_path). Run from the app and pass explicit paths.")

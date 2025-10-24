@@ -1,0 +1,21 @@
+order_id,customer_id,customer_name,customer_email,customer_phone,product_id,product_name,product_category,product_price,quantity,order_date,shipping_address,shipping_city,shipping_state,shipping_zip,total_price,payment_status,order_status,discount,sales_tax,promo_code
+1,1,George Parks,kathrynharris@example.com,669.700.7853x889,1,Laptop,Electronics,799.99,1,2025-10-10,"43605 William Field Suite 215
+Nicholaston, ID 28404",Lake Teresaton,Colorado,32018,636.2990098638181,Pending,Shipped,0.20461629537391954,63.53016434719238,pretty
+2,2,Amy Anderson,kimberlychurch@example.net,(215)516-3260x85206,1,Laptop,Electronics,799.99,4,2025-02-04,"09520 Catherine Port
+South Shellyton, CA 81075",Ronaldshire,New Jersey,10581,3125.3299780277275,Pending,Pending,0.02332217339350253,263.28100198659513,
+3,3,Edward Smith,larry70@example.net,+1-793-469-5731x2613,3,T-shirt,Apparel,19.99,2,2025-06-10,"006 Charles Gardens Apt. 154
+New Brianshire, FM 02713",Markport,Louisiana,94872,38.949322511759505,Failed,Pending,0.025779827119572118,3.6765481619281775,would
+4,4,Samuel Williams,robbinskathy@example.net,(560)447-4951x09775,4,Headphones,Electronics,59.99,5,2025-07-29,"9632 Smith Plaza
+Thompsonhaven, IA 00756",South Sophiamouth,Louisiana,64778,219.01091352881886,Pending,Pending,0.26984192855869693,14.938247461424167,
+5,5,Carolyn Joseph,sdaniels@example.org,(906)223-6792,2,Smartphone,Electronics,499.99,2,2025-07-28,"PSC 7541, Box 4968
+APO AE 97204",Lake Thomasbury,Michigan,26533,909.4863603294552,Pending,Cancelled,0.09049544957953638,75.44414870147423,
+6,6,Melissa Martinez,michaeledwards@example.com,448-302-1585x707,3,T-shirt,Apparel,19.99,1,2025-01-05,"924 Troy Parkway Apt. 993
+Thomasfort, NH 21040",Sandersport,Ohio,22514,16.828159267379743,Paid,Cancelled,0.15817112219210894,1.397997906597926,
+7,7,Danielle Solis,erichobbs@example.com,001-316-663-0389,2,Smartphone,Electronics,499.99,2,2025-04-03,"252 Matthew Walks Suite 433
+Kaitlinshire, NC 74674",Lake Emmaville,Alabama,72839,960.7469460356132,Pending,Pending,0.039233838641159646,63.74617285468207,
+8,8,Shannon Williams,kevin38@example.org,001-764-795-9303x6102,2,Smartphone,Electronics,499.99,5,2025-05-05,"933 Jones Path
+New Maryview, MP 07473",Jacquelinemouth,Hawaii,92169,2492.4117811885685,Failed,Shipped,0.0030153478315290802,141.92479018444217,support
+9,9,Rachel Mcguire,amanda14@example.net,275-503-3325,1,Laptop,Electronics,799.99,2,2025-08-01,"37908 Caroline Island
+East Ericbury, LA 74978",New Rachelland,Oregon,57749,1321.5612383141056,Paid,Pending,0.17401390122744928,74.99797884369752,lawyer
+10,10,Joy Price,julie89@example.com,001-619-483-6546x5277,3,T-shirt,Apparel,19.99,2,2025-03-20,"696 Lori Avenue
+Cantuhaven, MO 72069",Whitefort,Arkansas,85871,33.09975780089982,Pending,Pending,0.17209210102801828,3.270945047219755,

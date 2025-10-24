@@ -1,0 +1,4 @@
+# Ignore only the following two folders
+Run_Space/
+__pycache__/
+.env

@@ -1,10 +1,8 @@
 import json
 import os
-from gemini_Call import api_call
-def generate_create_script(metadata_file="Run_Space/metadata.json",
-                             plantuml_file="Run_Space/plantuml_code.puml",
-                             output_file="Run_Space/create_Database_Script.py",
-                             model="gemini-2.5-flash"):
+from .gemini_Call import api_call
+
+def generate_create_script(metadata_file, plantuml_file, output_file, model="gemini-2.5-flash"):
     with open(metadata_file, 'r') as file:
         refined_metadata = json.load(file)
 
@@ -27,7 +25,7 @@ def generate_create_script(metadata_file="Run_Space/metadata.json",
 Task:
 
 1. Generate a complete Python script that connects to a MySQL database using mysql.connector.
-2. Read metadata from a JSON file that defines table names, columns, data types, primary keys, and foreign keys.
+2. Read metadata from a JSON file that defines table names, columns, data types, primary keys, foreign keys and whether a column has null values or not.
 3. Create all tables defined in the metadata with appropriate PRIMARY KEY and FOREIGN KEY constraints.
 4. Use DEFERRABLE INITIALLY DEFERRED for all foreign keys (if supported syntactically).
 5. Use environment variables DB_HOST, DB_NAME, DB_USER, DB_PASS, DB_PORT.
@@ -90,10 +88,14 @@ Return only a Python script that is fully executable as a single file. Do not in
 
     print("⏳ Generating Python script with Gemini...")
     py_code = api_call(prompt, model=model)
-
+    if("```python" in py_code):
+        py_code = py_code.split("```python")[1].split("```")[0]
+    out_dir = os.path.dirname(output_file)
+    if out_dir:
+        os.makedirs(out_dir, exist_ok=True)
     with open(output_file, "w") as f:
         f.write(py_code.strip())
     print(f"✅ Python script generated and saved to: {output_file}")
     
 if __name__ == "__main__":
-    generate_create_script("Run_Space/metadata.json", "Run_Space/relationship_schema.puml", "Run_Space/create_Database_Script.py", model="gemini-2.5-flash")
+    print("This module provides generate_create_script(metadata_file, plantuml_file, output_file, model). Call from app with explicit paths.")

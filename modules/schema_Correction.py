@@ -7,7 +7,7 @@ from typing import Any, Dict, List, Union
 from dotenv import load_dotenv
 import google.generativeai as genai
 import re
-from gemini_Call import api_call
+from .gemini_Call import api_call
 
 
 def load_json_file(path: str) -> Any:

@@ -6,7 +6,7 @@ def clear_csv_from_run_space():
         return
 
     for file_name in os.listdir(run_space_dir):
-        if file_name.lower().endswith('.csv'):
+        if not(file_name.lower().endswith('.py')):
             file_path = os.path.join(run_space_dir, file_name)
             try:
                 os.remove(file_path)

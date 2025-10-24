@@ -1,0 +1,119 @@
+{% extends "index.html" %}
+
+{% block title %}Dashboard - Schema Builder{% endblock %}
+
+{% block content %}
+    <h2>📊 Schema Preview</h2>
+
+    <div class="form-container">
+        <label for="task-id-input">Enter Task ID to view schema preview</label>
+        <input id="task-id-input" type="text" placeholder="Paste task_id here" style="width:100%; padding:8px; margin-bottom:8px;">
+        <div style="display:flex; gap:8px;">
+            <button id="load-btn">Load Preview</button>
+            <button id="start-poll-btn">Start Auto-Poll</button>
+            <button id="stop-poll-btn" disabled>Stop Auto-Poll</button>
+        </div>
+    </div>
+
+    <div class="review-container">
+        <h3>Schema Preview</h3>
+        <div id="schema-image-container">
+            <img id="schema-preview" src="" alt="Schema preview will appear here" style="display:block; background:#fff;" />
+        </div>
+        <div style="margin-top:10px;">
+            <button id="zoom-btn" disabled>Zoom (Full Screen)</button>
+            <button id="refresh-btn">Refresh Preview</button>
+        </div>
+        <p id="preview-hint" style="color:#666; margin-top:8px;">Load a task ID to view the current schema image. If the schema is corrected later, start auto-poll to update automatically.</p>
+    </div>
+
+    <!-- Fullscreen modal for zoomed schema -->
+    <div id="schema-modal" class="modal-overlay" style="display:none;">
+        <div class="modal-content">
+            <button id="modal-close" class="modal-close">Close</button>
+            <img id="schema-modal-img" src="" alt="Full-screen schema" />
+        </div>
+    </div>
+
+    {% endblock %}
+
+{% block scripts %}
+    <script>
+        let pollInterval = null;
+        let lastUrl = null;
+
+        function setPreviewSrc(url){
+            const img = document.getElementById('schema-preview');
+            if(!url){
+                img.style.display = 'none';
+                document.getElementById('zoom-btn').disabled = true;
+                return;
+            }
+            const cacheBust = Date.now();
+            img.src = url + (url.includes('?') ? '&' : '?') + 't=' + cacheBust;
+            img.style.display = 'block';
+            document.getElementById('zoom-btn').disabled = false;
+            // update modal image too
+            document.getElementById('schema-modal-img').src = img.src;
+            lastUrl = url;
+        }
+
+        async function loadPreview(){
+            const taskId = document.getElementById('task-id-input').value.trim();
+            if(!taskId){ alert('Please enter a task_id'); return; }
+            try{
+                const resp = await fetch('/status/' + taskId);
+                if(!resp.ok){ alert('Task not found or server error'); return; }
+                const data = await resp.json();
+                const url = data.schema_image_url || '';
+                setPreviewSrc(url);
+            }catch(e){ console.error(e); alert('Failed to fetch task status'); }
+        }
+
+        async function pollPreview(){
+            const taskId = document.getElementById('task-id-input').value.trim();
+            if(!taskId) return;
+            try{
+                const resp = await fetch('/status/' + taskId);
+                if(!resp.ok) return;
+                const data = await resp.json();
+                const url = data.schema_image_url || '';
+                // If url changed or we want to refresh the canonical image, update
+                if(url && url !== lastUrl){
+                    setPreviewSrc(url);
+                }
+            }catch(e){ console.error('poll error', e); }
+        }
+
+        document.getElementById('load-btn').addEventListener('click', loadPreview);
+        document.getElementById('refresh-btn').addEventListener('click', loadPreview);
+
+        document.getElementById('start-poll-btn').addEventListener('click', ()=>{
+            if(pollInterval) return;
+            pollInterval = setInterval(pollPreview, 5000);
+            document.getElementById('start-poll-btn').disabled = true;
+            document.getElementById('stop-poll-btn').disabled = false;
+        });
+
+        document.getElementById('stop-poll-btn').addEventListener('click', ()=>{
+            if(!pollInterval) return;
+            clearInterval(pollInterval);
+            pollInterval = null;
+            document.getElementById('start-poll-btn').disabled = false;
+            document.getElementById('stop-poll-btn').disabled = true;
+        });
+
+        // Zoom modal
+        document.getElementById('zoom-btn').addEventListener('click', ()=>{
+            const overlay = document.getElementById('schema-modal');
+            overlay.style.display = 'flex';
+        });
+        document.getElementById('modal-close').addEventListener('click', ()=>{
+            document.getElementById('schema-modal').style.display = 'none';
+        });
+
+        // Close modal on ESC
+        document.addEventListener('keydown', (e)=>{ if(e.key === 'Escape'){ document.getElementById('schema-modal').style.display = 'none'; } });
+    </script>
+{% endblock %}
+{% endblock %}

@@ -1,4 +1,5 @@
 import re
+import os
 from spellchecker import SpellChecker
 import google.generativeai as genai
 from gemini_Call import api_call
@@ -28,10 +29,15 @@ User Query (cleaned):
 \"{cleaned_query}\"
 """
     response = api_call(prompt, model="gemini-2.5-pro")
-    save_to_txt(response.strip(), "Run_Space/refined_User_Query.txt")
+    # Do not assume a default path here; caller should call save_to_txt explicitly with the task path.
+    return response.strip()
     return response.strip()
 
-def save_to_txt(content: str, filename: str = "Run_Space/refined_User_Query.txt"):
+def save_to_txt(content: str, filename: str):
+    """Save cleaned query text to the explicit filename provided by caller."""
+    out_dir = os.path.dirname(filename)
+    if out_dir:
+        os.makedirs(out_dir, exist_ok=True)
     with open(filename, "w", encoding="utf-8") as f:
         f.write(content)
     print(f"\n✅ Analysis saved to '{filename}'")
@@ -44,10 +50,4 @@ if __name__ == "__main__":
     raw_query ="hey so i was lookin at the salez data but its all over the place like therez missing vlaues and i think some entris are duplicated or maybe just wrongly formated also i got some file from last month that dosnt match wit the current one so can u mayb clean it up and maybe group it by region or custmer segment or somethin and also we want to find trendz for next quartar like what product selling gud and stuff also the csv is like four files combined so u probbly need to merge them or somthin too"
 
 
-    analysis_result = clean_text(raw_query)
-    print("\nGemini Analysis:")
-    print(analysis_result)
-
-    final_output = clean_text(raw_query, analysis_result)
-
-    save_to_txt(final_output)
+    print("This module provides clean_text() and save_to_txt(content, filename). Run from the app and pass explicit paths.")
