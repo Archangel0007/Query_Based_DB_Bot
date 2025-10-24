@@ -5,46 +5,46 @@ skinparam linetype ortho
 entity DimCategory {
   * categoryID : INTEGER
   --
-  categoryName : VARCHAR
-  description : VARCHAR
-  picture : VARCHAR
+  categoryName : VARCHAR(100)
+  description : VARCHAR(255)
+  picture : VARCHAR(255)
 }
 
 entity DimCustomer {
-  * customerID : VARCHAR
+  * customerID : VARCHAR(50)
   --
-  companyName : VARCHAR
-  contactName : VARCHAR
-  contactTitle : VARCHAR
-  address : VARCHAR
-  city : VARCHAR
-  region : VARCHAR
-  postalCode : VARCHAR
-  country : VARCHAR
-  phone : VARCHAR
-  fax : VARCHAR
+  companyName : VARCHAR(100)
+  contactName : VARCHAR(100)
+  contactTitle : VARCHAR(100)
+  address : VARCHAR(255)
+  city : VARCHAR(50)
+  region : VARCHAR(50)
+  postalCode : VARCHAR(20)
+  country : VARCHAR(50)
+  phone : VARCHAR(50)
+  fax : VARCHAR(50)
 }
 
 entity DimEmployee {
   * employeeID : INTEGER
   --
-  lastName : VARCHAR
-  firstName : VARCHAR
-  title : VARCHAR
-  titleOfCourtesy : VARCHAR
+  lastName : VARCHAR(100)
+  firstName : VARCHAR(100)
+  title : VARCHAR(100)
+  titleOfCourtesy : VARCHAR(50)
   birthDate : TIMESTAMP
   hireDate : TIMESTAMP
-  address : VARCHAR
-  city : VARCHAR
-  region : VARCHAR
-  postalCode : VARCHAR
-  country : VARCHAR
-  homePhone : VARCHAR
+  address : VARCHAR(255)
+  city : VARCHAR(50)
+  region : VARCHAR(50)
+  postalCode : VARCHAR(20)
+  country : VARCHAR(50)
+  homePhone : VARCHAR(50)
   extension : INTEGER
-  photo : VARCHAR
-  notes : VARCHAR
+  photo : VARCHAR(255)
+  notes : VARCHAR(1024)
   # reportsTo : INTEGER <<FK>>
-  photoPath : VARCHAR
+  photoPath : VARCHAR(255)
 }
 
 entity FactEmployeeTerritory {
@@ -56,64 +56,64 @@ entity FactSalesOrderDetail {
   * orderID : INTEGER <<FK>>
   * productID : INTEGER <<FK>>
   --
-  unitPrice : DECIMAL
+  unitPrice : DECIMAL(10, 2)
   quantity : INTEGER
-  discount : DECIMAL
+  discount : DECIMAL(10, 2)
 }
 
 entity FactSalesOrderDetailFresh {
   * orderID : INTEGER <<FK>>
   * productID : INTEGER <<FK>>
   --
-  unitPrice : DECIMAL
+  unitPrice : DECIMAL(10, 2)
   quantity : INTEGER
-  discount : DECIMAL
+  discount : DECIMAL(10, 2)
 }
 
 entity FactOrderHeader {
   * orderID : INTEGER
   --
-  # customerID : VARCHAR <<FK>>
+  # customerID : VARCHAR(50) <<FK>>
   # employeeID : INTEGER <<FK>>
   orderDate : TIMESTAMP
   requiredDate : TIMESTAMP
   shippedDate : TIMESTAMP
   # shipVia : INTEGER <<FK>>
-  freight : DECIMAL
-  shipName : VARCHAR
-  shipAddress : VARCHAR
-  shipCity : VARCHAR
-  shipRegion : VARCHAR
-  shipPostalCode : VARCHAR
-  shipCountry : VARCHAR
+  freight : DECIMAL(10, 2)
+  shipName : VARCHAR(100)
+  shipAddress : VARCHAR(255)
+  shipCity : VARCHAR(50)
+  shipRegion : VARCHAR(50)
+  shipPostalCode : VARCHAR(20)
+  shipCountry : VARCHAR(50)
 }
 
 entity FactOrderUpdated {
   * orderID : INTEGER
   --
-  # customerID : VARCHAR <<FK>>
+  # customerID : VARCHAR(50) <<FK>>
   # employeeID : INTEGER <<FK>>
   orderDate : TIMESTAMP
   requiredDate : TIMESTAMP
   shippedDate : TIMESTAMP
   # shipVia : INTEGER <<FK>>
-  freight : DECIMAL
-  shipName : VARCHAR
-  shipAddress : VARCHAR
-  shipCity : VARCHAR
-  shipRegion : VARCHAR
-  shipPostalCode : VARCHAR
-  shipCountry : VARCHAR
+  freight : DECIMAL(10, 2)
+  shipName : VARCHAR(100)
+  shipAddress : VARCHAR(255)
+  shipCity : VARCHAR(50)
+  shipRegion : VARCHAR(50)
+  shipPostalCode : VARCHAR(20)
+  shipCountry : VARCHAR(50)
 }
 
 entity DimProduct {
   * productID : INTEGER
   --
-  productName : VARCHAR
+  productName : VARCHAR(100)
   # supplierID : INTEGER <<FK>>
   # categoryID : INTEGER <<FK>>
-  quantityPerUnit : VARCHAR
-  unitPrice : DECIMAL
+  quantityPerUnit : VARCHAR(50)
+  unitPrice : DECIMAL(10, 2)
   unitsInStock : INTEGER
   unitsOnOrder : INTEGER
   reorderLevel : INTEGER
@@ -123,47 +123,47 @@ entity DimProduct {
 entity DimProductFresh {
   * "Product ID" : INTEGER
   --
-  "Product Name" : VARCHAR
-  ListPrice : DECIMAL
-  UnitCost : DECIMAL
-  Discontinued : VARCHAR
-  CategoryName : VARCHAR
-  Supplier : VARCHAR
+  "Product Name" : VARCHAR(100)
+  ListPrice : DECIMAL(10, 2)
+  UnitCost : DECIMAL(10, 2)
+  Discontinued : VARCHAR(10)
+  CategoryName : VARCHAR(100)
+  Supplier : VARCHAR(100)
 }
 
 entity DimRegion {
   * regionID : INTEGER
   --
-  regionDescription : VARCHAR
+  regionDescription : VARCHAR(100)
 }
 
 entity DimShipper {
   * shipperID : INTEGER
   --
-  companyName : VARCHAR
-  phone : VARCHAR
+  companyName : VARCHAR(100)
+  phone : VARCHAR(50)
 }
 
 entity DimSupplier {
   * supplierID : INTEGER
   --
-  companyName : VARCHAR
-  contactName : VARCHAR
-  contactTitle : VARCHAR
-  address : VARCHAR
-  city : VARCHAR
-  region : VARCHAR
-  postalCode : VARCHAR
-  country : VARCHAR
-  phone : VARCHAR
-  fax : VARCHAR
-  homePage : VARCHAR
+  companyName : VARCHAR(100)
+  contactName : VARCHAR(100)
+  contactTitle : VARCHAR(100)
+  address : VARCHAR(255)
+  city : VARCHAR(50)
+  region : VARCHAR(50)
+  postalCode : VARCHAR(20)
+  country : VARCHAR(50)
+  phone : VARCHAR(50)
+  fax : VARCHAR(50)
+  homePage : VARCHAR(255)
 }
 
 entity DimTerritory {
   * territoryID : INTEGER
   --
-  territoryDescription : VARCHAR
+  territoryDescription : VARCHAR(100)
   # regionID : INTEGER <<FK>>
 }
 
