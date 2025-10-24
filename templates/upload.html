@@ -15,7 +15,7 @@
         </div>
 
         <div class="form-container" id="form-container">
-            <h3>🚀 Step 1: Provide Data and Context</h3>
+            <h3>Provide Data and Context</h3>
             <p><strong>Accepted Data Types:</strong> CSV, JSON, XLS, PDF/DOC, XML, Website/HTML, TXT</p>
             <form id="upload-form">
                 <label for="data_medium">Select Data Source Medium:</label>
@@ -238,6 +238,41 @@
             }
         });
 
+        function showImageModal(src) {
+            // Remove existing modal if any
+            const existingModal = document.querySelector('.modal-overlay');
+            if (existingModal) {
+                existingModal.remove();
+            }
+
+            // Create modal elements
+            const modalOverlay = document.createElement('div');
+            modalOverlay.className = 'modal-overlay';
+
+            const modalContent = document.createElement('div');
+            modalContent.className = 'modal-content';
+
+            const modalImage = document.createElement('img');
+            modalImage.src = src;
+
+            const closeModalBtn = document.createElement('button');
+            closeModalBtn.className = 'modal-close';
+            closeModalBtn.innerHTML = '&times;'; // 'x' symbol
+
+            // Assemble modal
+            modalContent.appendChild(modalImage);
+            modalContent.appendChild(closeModalBtn);
+            modalOverlay.appendChild(modalContent);
+            document.body.appendChild(modalOverlay);
+
+            // Add event listeners to close the modal
+            const closeModal = () => modalOverlay.remove();
+            closeModalBtn.addEventListener('click', closeModal);
+            modalOverlay.addEventListener('click', (e) => {
+                if (e.target === modalOverlay) closeModal(); // Close only if clicking on the background
+            });
+        }
+
         async function pollStatus() {
             if (!taskId) return;
 
@@ -264,8 +299,17 @@
             chatContainer.scrollTop = chatContainer.scrollHeight;
 
             // Show schema image if available
-            if (data.schema_image_url && schemaImageContainer.style.display === 'none') {
-                schemaImageContainer.innerHTML = `<img src="${data.schema_image_url}?t=${new Date().getTime()}" alt="Generated Schema">`;
+            if (data.schema_image_url) {
+                const imageUrl = `${data.schema_image_url}?t=${new Date().getTime()}`;
+                let img = schemaImageContainer.querySelector('img');
+                if (!img) {
+                    schemaImageContainer.innerHTML = `<img src="${imageUrl}" alt="Generated Schema">`;
+                    img = schemaImageContainer.querySelector('img');
+                    img.addEventListener('click', () => showImageModal(imageUrl));
+                } else {
+                    // Update src to refresh the image if it changed
+                    if (img.src !== imageUrl) img.src = imageUrl;
+                }
                 schemaImageContainer.style.display = 'block';
             }
 

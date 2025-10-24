@@ -334,12 +334,12 @@ def continue_pipeline(task_id):
 @app.route('/')
 def upload():
     print("[ROUTE] GET / - Upload page requested.")
-    return render_template('upload.html')
+    return render_template('upload.html', active_page='upload')
 
 @app.route('/dashboard')
 def dashboard():
     print("[ROUTE] GET /dashboard")
-    return render_template('dashboard.html')
+    return render_template('dashboard.html', active_page='dashboard')
 
 @app.route('/Run_Space/<path:filename>')
 def run_space_files(filename):

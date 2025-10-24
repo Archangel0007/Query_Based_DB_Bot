@@ -1,6 +1,43 @@
 import json
 import os
 from .gemini_Call import api_call
+from dotenv import load_dotenv
+import mysql.connector
+import logging
+
+def get_db_connection():
+    """
+    Establishes and returns a database connection.
+    """
+    load_dotenv(dotenv_path='../.env')  
+    DB_HOST="metro.proxy.rlwy.net"
+    DB_USER="root"
+    DB_PASS="NwrMwVHJoQkwvoEqYHNdupOzolbwBSDo"
+    DB_NAME="railway"
+    DB_PORT=16519
+    print("DB_HOST:", os.getenv("DB_HOST"))
+    print("DB_USER:", os.getenv("DB_USER"))
+    print("DB_PASS:", os.getenv("DB_PASS"))
+    print("DB_NAME:", os.getenv("DB_NAME"))
+    print("DB_PORT:", os.getenv("DB_PORT"))
+
+    try:
+        conn = mysql.connector.connect(
+            host=DB_HOST,
+            database=DB_NAME,
+            user=DB_USER,
+            password=DB_PASS,
+            port=DB_PORT  # Ensure DB_PORT is an integer
+        )
+        if conn.is_connected():
+            logging.info("Successfully connected to the database.")
+            return conn
+        else:
+            raise Exception("Connection failed")
+    except Exception as e:
+        logging.error(f"Error while connecting to MySQL: {e}")
+        raise
+
 
 def generate_create_script(metadata_file, plantuml_file, output_file, model="gemini-2.5-flash"):
     with open(metadata_file, 'r') as file:
@@ -64,7 +101,6 @@ Here is the ER diagram in PlantUML:
 Your finale code should be a complete Python script in the format as specified below:
 # Example format
 import mysql.connector
-from db_utils import get_db_connection
 
 def create_tables():
     statements = [
@@ -90,6 +126,8 @@ Return only a Python script that is fully executable as a single file. Do not in
     py_code = api_call(prompt, model=model)
     if("```python" in py_code):
         py_code = py_code.split("```python")[1].split("```")[0]
+    output = exec(py_code)
+    print(output)
     out_dir = os.path.dirname(output_file)
     if out_dir:
         os.makedirs(out_dir, exist_ok=True)

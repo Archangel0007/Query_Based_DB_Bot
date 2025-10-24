@@ -75,12 +75,31 @@ def run_python_code(code: str, outfile: Optional[str] = None, timeout: int = 100
 		# Use basename when invoking the interpreter and set cwd to run_space_dir.
 		# This avoids accidental duplicated-path issues when passing absolute paths
 		# to subprocess on some platforms.
+		command = [sys.executable, os.path.basename(script_path)]
+		logger.info(f"Executing command: {' '.join(command)} in CWD: {run_space_dir}")
+
 		try:
-			completed = subprocess.run([sys.executable, os.path.basename(script_path)], capture_output=True, text=True, timeout=timeout, cwd=run_space_dir)
-			logger.info("Script finished with returncode=%s", completed.returncode)
+			# Use Popen to stream output in real-time
+			process = subprocess.Popen(command, cwd=run_space_dir, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, encoding='utf-8')
+			
+			stdout_lines = []
+			stderr_lines = []
+
+			# Read output line by line
+			for line in process.stdout:
+				print(f"[SCRIPT STDOUT] {line.strip()}", flush=True)
+				stdout_lines.append(line)
+			
+			for line in process.stderr:
+				print(f"[SCRIPT STDERR] {line.strip()}", flush=True)
+				stderr_lines.append(line)
+
+			process.wait(timeout=timeout)
+			logger.info("Script finished with returncode=%s", process.returncode)
+			
 		except subprocess.TimeoutExpired as e:
 			logger.warning("Script timeout after %s seconds", timeout)
-			return {"returncode": -1, "stdout": e.stdout or "", "stderr": f"Timeout after {timeout}s", "path": script_path, "files": [], "copied": []}
+			return {"returncode": -1, "stdout": "".join(stdout_lines), "stderr": f"Timeout after {timeout}s", "path": script_path, "files": [], "copied": []}
 
 		produced = []
 		for name in os.listdir(run_space_dir):
@@ -91,14 +110,14 @@ def run_python_code(code: str, outfile: Optional[str] = None, timeout: int = 100
 				produced.append(full)
 
 		result = {
-			"returncode": completed.returncode,
-			"stdout": completed.stdout,
-			"stderr": completed.stderr,
+			"returncode": process.returncode,
+			"stdout": "".join(stdout_lines),
+			"stderr": "".join(stderr_lines),
 			"path": script_path,
 			"files": produced,
 			"copied": [],
 		}
-		logger.info("run_python_code: returning result with stdout length=%d", len(completed.stdout or ""))
+		logger.info("run_python_code: returning result with stdout length=%d", len(result['stdout']))
 		return result
 	else:
 		# Fallback: isolated temp dir execution
@@ -154,7 +173,7 @@ def save_generated_code(code: str, filename: str = "generated_code.py") -> None:
 
 if __name__ == "__main__":
 
-	filepath = '../Run_Space/52af2004-e0ef-43c3-a5ed-f40c61b180b1/create_Database_Script.py'
+	filepath = '../Run_Space/34d91b7d-ed70-4fba-a84b-3cf0a4ad0953/create_Database_Script.py'
 
 	if not os.path.exists(filepath):
 		logger.error(f"File not found: {filepath}")
