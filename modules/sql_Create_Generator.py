@@ -126,8 +126,6 @@ Return only a Python script that is fully executable as a single file. Do not in
     py_code = api_call(prompt, model=model)
     if("```python" in py_code):
         py_code = py_code.split("```python")[1].split("```")[0]
-    output = exec(py_code)
-    print(output)
     out_dir = os.path.dirname(output_file)
     if out_dir:
         os.makedirs(out_dir, exist_ok=True)

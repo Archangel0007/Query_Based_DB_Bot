@@ -6,6 +6,8 @@ import threading
 from datetime import datetime, timezone
 from flask import Flask, render_template, request, jsonify, send_from_directory
 import shutil
+import json
+import json
 
 # -------------------- INITIAL SETUP --------------------
 print("[INIT] Starting Flask pipeline service...")
@@ -16,7 +18,7 @@ print(f"[INIT] Project root: {project_root}")
 
 # -------------------- MODULE IMPORTS --------------------
 try:
-    from modules.conversions import process_uploaded_files
+    from modules.conversions import process_uploaded_files, convert_html_to_csv
     from modules.metadata import generate_metadata, get_csv_files_from_directory
     from modules.conceptual_Designer import generate_dimensional_model
     from modules.schema_Generator import generate_schema
@@ -25,6 +27,7 @@ try:
     from modules.sql_Create_Generator import generate_create_script
     from modules.sql_Insert_Generator import generate_insert_script
     from modules.script_Runner import run_python_code
+    from modules.data_Fetch import fetch_from_dynamodb, fetch_from_s3, fetch_from_cosmosdb
     print("[INIT] All module imports successful.")
 except Exception as e:
     print(f"[ERROR] Failed to import modules: {e}")
@@ -295,12 +298,14 @@ def continue_pipeline(task_id):
 
         print("[STEP 9] Executing CREATE script...")
         set_task_status(task_id, "Creating tables...")
-        with open(get_path("create_Database_Script.py")) as f:
+        output_path = "Run_Space" + f"/{task_id}"+"/create_Database_Script.py"
+        with open(output_path,"r", encoding="utf-8") as f:
             # Execute the CREATE script inside the task-specific Run_Space so
             # any relative paths and DB files are resolved correctly.
-            result = run_python_code(f.read(), run_space_dir=task_dir)
-            if result and result.get('returncode', 1) != 0:
-                raise Exception(result['stderr'])
+            python_code = f.read()
+        print(python_code)
+        # Execute the script, ensuring it runs within its own directory
+        result = run_python_code(python_code, run_space_dir=task_dir)
         add_log(task_id, "✅ Tables created.")
 
         set_task_status(task_id, "Generating INSERT script...")
@@ -310,14 +315,17 @@ def continue_pipeline(task_id):
             plantuml_file=get_path("relationship_schema.puml"),
             output_file=get_path("insert_Data_Script.py")
         )
+        output_path = "Run_Space" + f"/{task_id}"+"/insert_Data_Script.py"
         add_log(task_id, "✅ INSERT script generated.")
 
         print("[STEP 11] Executing INSERT script...")
         set_task_status(task_id, "Inserting data...")
-        with open(get_path("insert_Data_Script.py")) as f:
-            result = run_python_code(f.read(), run_space_dir=task_dir)
-            if result and result.get('returncode', 1) != 0:
-                raise Exception(result['stderr'])
+        with open(output_path,"r", encoding="utf-8") as f:
+            python_code = f.read()
+        # Execute the script, ensuring it runs within its own directory
+        result = run_python_code(python_code, run_space_dir=task_dir)
+        if result and result.get('returncode', 1) != 0:
+            raise Exception(result['stderr'])
         add_log(task_id, "✅ Data inserted.")
 
         set_task_status(task_id, "Completed")
@@ -360,6 +368,7 @@ def start_generation():
     task_dir = create_task_dir(task_id)
 
     files_uploaded = False
+    fetch_attempted = False
     if data_medium == 'direct_file_drop' and files:
         print(f"[UPLOAD] Handling {len(files)} uploaded files.")
         handle_user_upload(files, task_id)
@@ -380,6 +389,152 @@ def start_generation():
                 "saved_files": saved_files,
                 "hint": "Upload CSV files or JSON files that can be converted to CSV."
             }), 400
+
+    task_data_path = None
+    if data_medium in ('dynamodb', 'aws_dynamodb'):
+        print("[FETCH] Data source: DynamoDB")
+        try:
+            # Support two forms: either individual fields (preferred) or a
+            # combined connection string in 'aws_dynamodb_connection' like
+            # "region=us-east-1,table=my_table,access_key=...,secret_key=...".
+            # Require explicit structured DynamoDB inputs from the client form
+            access_key = request.form.get('dynamodb_access_key')
+            secret_key = request.form.get('dynamodb_secret_key')
+            region = request.form.get('dynamodb_region')
+            table_name = request.form.get('dynamodb_table_name')
+
+            if not table_name:
+                return jsonify({"error": "Missing DynamoDB table name (provide 'dynamodb_table_name' in the form)."}), 400
+
+            fetch_attempted = True
+            items = fetch_from_dynamodb(
+                access_key=access_key,
+                secret_key=secret_key,
+                region=region,
+                table_name=table_name
+            )
+            # use resolved table_name (may have come from parsed connection)
+            task_data_path = os.path.join(task_dir, f"{table_name}.json")
+            with open(task_data_path, 'w', encoding='utf-8') as f:
+                json.dump(items, f, indent=2)
+            # mark that we've placed files into the task folder
+            files_uploaded = True
+            add_log(task_id, f"✅ Fetched {len(items)} items from DynamoDB table '{table_name}'.")
+        except Exception as e:
+            return jsonify({"error": f"DynamoDB fetch failed: {e}"}), 500
+
+    elif data_medium in ('s3', 's3_bucket'):
+        print("[FETCH] Data source: S3")
+        try:
+            # Support either separate fields or a single s3_bucket_path like
+            # s3://bucket/key/to/object.ext
+            # Require explicit structured S3 inputs from the client form
+            if 's3_object_key' in request.form and 's3_bucket_name' in request.form:
+                bucket = request.form['s3_bucket_name']
+                object_key = request.form['s3_object_key']
+            else:
+                return jsonify({"error": "Missing S3 bucket name or object key (provide 's3_bucket_name' and 's3_object_key')."}), 400
+
+            local_filename = os.path.join(task_dir, os.path.basename(object_key) or 's3_object')
+            fetch_attempted = True
+            fetch_from_s3(
+                access_key=request.form.get('s3_access_key'),
+                secret_key=request.form.get('s3_secret_key'),
+                region=request.form.get('s3_region'),
+                bucket_name=bucket,
+                object_key=object_key,
+                local_filename=local_filename
+            )
+            # mark that we've placed files into the task folder
+            files_uploaded = True
+            add_log(task_id, f"✅ Fetched file from S3 bucket '{bucket}' to '{local_filename}'.")
+        except Exception as e:
+            return jsonify({"error": f"S3 fetch failed: {e}"}), 500
+
+    elif data_medium in ('azure_cosmosdb', 'cosmosdb'):
+        print("[FETCH] Data source: Azure Cosmos DB")
+        try:
+            # Expect either separate fields: cosmos_uri, cosmos_db, cosmos_collection
+            # or a combined connection string in 'azure_cosmosdb_connection' (less preferred)
+            # Require explicit structured Cosmos inputs from the client form
+            uri = request.form.get('cosmos_uri')
+            db_name = request.form.get('cosmos_db')
+            collection = request.form.get('cosmos_collection')
+
+            if not (uri and db_name and collection):
+                return jsonify({"error": "Missing CosmosDB connection details. Provide cosmos_uri, cosmos_db, and cosmos_collection."}), 400
+
+            fetch_attempted = True
+            docs = fetch_from_cosmosdb(uri=uri, db_name=db_name, collection_name=collection)
+            task_data_path = os.path.join(task_dir, f"{db_name}__{collection}.json")
+            with open(task_data_path, 'w', encoding='utf-8') as f:
+                json.dump(docs, f, indent=2)
+            add_log(task_id, f"✅ Fetched {len(docs)} documents from CosmosDB {db_name}/{collection}.")
+        except Exception as e:
+            return jsonify({"error": f"CosmosDB fetch failed: {e}"}), 500
+
+    elif data_medium in ('website', 'Website/HTML', 'website_html'):
+        print("[FETCH] Data source: Website/HTML")
+        try:
+            website_url = request.form.get('website_link') or request.form.get('website_url')
+            if not website_url:
+                return jsonify({"error": "Missing website URL (provide 'website_link')."}), 400
+
+            fetch_attempted = True
+            add_log(task_id, f"Fetching and converting website: {website_url}")
+            # Ask converter to write directly into the task folder and return absolute paths
+            written_files = convert_html_to_csv(website_url, output_dir=task_dir)
+
+            # Ensure the returned files actually exist and record basenames
+            moved = [os.path.basename(p) for p in written_files if os.path.exists(p)]
+            files_uploaded = bool(moved)
+            task_data_path = task_dir
+            add_log(task_id, f"✅ Website conversion produced files: {moved}")
+            if not moved:
+                # Conversion completed but produced no files; return clear error to client
+                saved = [f for f in os.listdir(task_dir) if not f.startswith('.')]
+                return jsonify({
+                    "error": "Website conversion completed but no CSVs were produced.",
+                    "written_files": written_files,
+                    "saved_files": saved,
+                    "hint": "Check the target URL, page access, or conversion logs on the server."
+                }), 500
+        except Exception as e:
+            app.logger.error(f"Website conversion failed: {e}", exc_info=True)
+            return jsonify({"error": f"Website conversion failed: {e}"}), 500
+
+    # After fetching, all data (from any source) should be a local file in the task folder.
+    # If a fetch was attempted but nothing was written into the task folder, report an error.
+    try:
+        saved_files = [f for f in os.listdir(task_dir) if not f.startswith('.')]
+    except Exception:
+        saved_files = []
+
+    # Exclude the seeded helper file db_utils.py from the check
+    visible_files = [f for f in saved_files if f != 'db_utils.py']
+    if fetch_attempted and not visible_files:
+        print(f"[ERROR] Fetch attempted but no files were written to {task_dir}. Saved files: {saved_files}")
+        return jsonify({
+            "error": "Data fetch attempted but no files were written into the task Run_Space directory.",
+            "saved_files": saved_files,
+            "hint": "Check credentials, table/object names, and network access."
+        }), 500
+
+    # The rest of the pipeline expects CSVs, so run conversion (this may convert JSON -> CSV etc.)
+    converted = process_uploaded_files(task_dir)
+    add_log(task_id, "Running file conversion to ensure all data is in CSV format.")
+
+    # After conversion, ensure there are CSV files. If a fetch was attempted but conversion produced none,
+    # return an explicit error so the client can surface the fetch failure.
+    csv_files = get_csv_files_from_directory(task_dir)
+    if fetch_attempted and not csv_files:
+        saved_files = [f for f in os.listdir(task_dir) if not f.startswith('.')]
+        print(f"[ERROR] Fetch/convert attempted but no CSV files found in {task_dir}. Saved files: {saved_files}; Converted: {converted}")
+        return jsonify({
+            "error": "Data fetch/convert completed but no CSV files were produced.",
+            "saved_files": saved_files,
+            "converted_files": converted
+        }), 500
 
     if not (files_uploaded or data_medium != 'direct_file_drop') or not context:
         print("[ERROR] Invalid input: missing data source or context.")

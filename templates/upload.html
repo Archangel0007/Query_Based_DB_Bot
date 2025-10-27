@@ -25,6 +25,7 @@
                     <option value="aws_dynamodb">AWS DynamoDB</option>
                     <option value="azure_cosmosdb">Azure Cosmos DB</option>
                     <option value="s3_bucket">S3 Bucket</option>
+                    <option value="Website/HTML">Website/HTML</option>
                 </select>
 
                 <div id="direct_file_drop_input" class="medium-input-group">
@@ -37,19 +38,61 @@
                     <input type="text" id="sharepoint_link" name="sharepoint_link" placeholder="e.g., https://yourcompany.sharepoint.com/sites/data/file.xlsx">
                 </div>
 
+                <div id="website_input" class="medium-input-group" style="display: none;">
+                    <label class="input-label" for="website_link">Website / HTML URL</label>
+                    <input class="input-field" type="url" id="website_link" name="website_link" placeholder="https://example.com/">
+                    <small class="muted">Provide a public URL to a page containing structured tables or data to extract.</small>
+                </div>
+
                 <div id="aws_dynamodb_input" class="medium-input-group" style="display: none;">
-                    <label for="aws_dynamodb_connection">AWS DynamoDB Connection String/Details:</label>
-                    <input type="text" id="aws_dynamodb_connection" name="aws_dynamodb_connection" placeholder="e.g., region=us-east-1, table=my_table, access_key=..., secret_key=...">
+                    <div class="group-title">AWS DynamoDB (structured fields or connection string)</div>
+                    <label class="input-label" for="dynamodb_table_name">Table name</label>
+                    <input class="input-field" type="text" id="dynamodb_table_name" name="dynamodb_table_name" placeholder="e.g., orders">
+
+                    <label class="input-label" for="dynamodb_region">Region</label>
+                    <input class="input-field" type="text" id="dynamodb_region" name="dynamodb_region" placeholder="e.g., us-east-1">
+
+                    <label class="input-label" for="dynamodb_access_key">AWS Access Key </label>
+                    <input class="input-field" type="text" id="dynamodb_access_key" name="dynamodb_access_key" placeholder="Access key">
+
+                    <label class="input-label" for="dynamodb_secret_key">AWS Secret Key </label>
+                    <input class="input-field" type="password" id="dynamodb_secret_key" name="dynamodb_secret_key" placeholder="Secret key">
+
+                    <!-- Connection string option removed: please fill structured fields above -->
                 </div>
 
                 <div id="azure_cosmosdb_input" class="medium-input-group" style="display: none;">
-                    <label for="azure_cosmosdb_connection">Azure Cosmos DB Connection String/Details:</label>
-                    <input type="text" id="azure_cosmosdb_connection" name="azure_cosmosdb_connection" placeholder="e.g., AccountEndpoint=...;AccountKey=...">
+                    <div class="group-title">Azure Cosmos DB (structured fields or connection string)</div>
+                    <label class="input-label" for="cosmos_uri">Cosmos URI</label>
+                    <input class="input-field" type="text" id="cosmos_uri" name="cosmos_uri" placeholder="e.g., https://xxxx.documents.azure.com:443/">
+
+                    <label class="input-label" for="cosmos_db">Database name</label>
+                    <input class="input-field" type="text" id="cosmos_db" name="cosmos_db" placeholder="Database name">
+
+                    <label class="input-label" for="cosmos_collection">Collection name</label>
+                    <input class="input-field" type="text" id="cosmos_collection" name="cosmos_collection" placeholder="Collection name">
+
+                    <!-- Connection string option removed: please fill structured fields above -->
                 </div>
 
                 <div id="s3_bucket_input" class="medium-input-group" style="display: none;">
-                    <label for="s3_bucket_path">S3 Bucket Path:</label>
-                    <input type="text" id="s3_bucket_path" name="s3_bucket_path" placeholder="e.g., s3://my-bucket/path/to/data/">
+                    <div class="group-title">S3 (structured fields or s3:// path)</div>
+                    <label class="input-label" for="s3_bucket_name">Bucket name</label>
+                    <input class="input-field" type="text" id="s3_bucket_name" name="s3_bucket_name" placeholder="e.g., my-bucket">
+
+                    <label class="input-label" for="s3_object_key">Object key</label>
+                    <input class="input-field" type="text" id="s3_object_key" name="s3_object_key" placeholder="e.g., path/to/file.csv">
+
+                    <label class="input-label" for="s3_region">Region </label>
+                    <input class="input-field" type="text" id="s3_region" name="s3_region" placeholder="e.g., us-east-1">
+
+                    <label class="input-label" for="s3_access_key">S3 Access Key </label>
+                    <input class="input-field" type="text" id="s3_access_key" name="s3_access_key" placeholder="Access key">
+
+                    <label class="input-label" for="s3_secret_key">S3 Secret Key </label>
+                    <input class="input-field" type="password" id="s3_secret_key" name="s3_secret_key" placeholder="Secret key">
+
+                    <!-- Connection string/path option removed: please fill structured fields above -->
                 </div>
 
                 <label for="schema_context">Provide context about your schema (required):</label>
@@ -89,6 +132,7 @@
     const dataMediumSelect = document.getElementById('data_medium');
     const directFileDropInput = document.getElementById('direct_file_drop_input');
     const sharepointLinkInput = document.getElementById('sharepoint_link_input');
+    const websiteInput = document.getElementById('website_input');
     const awsDynamoDBInput = document.getElementById('aws_dynamodb_input');
     const azureCosmosDBInput = document.getElementById('azure_cosmosdb_input');
     const s3BucketInput = document.getElementById('s3_bucket_input');
@@ -100,6 +144,7 @@
         // Hide all input groups first
         directFileDropInput.style.display = 'none';
         sharepointLinkInput.style.display = 'none';
+        websiteInput.style.display = 'none';
         awsDynamoDBInput.style.display = 'none';
         azureCosmosDBInput.style.display = 'none';
         s3BucketInput.style.display = 'none';
@@ -111,6 +156,9 @@
                 break;
             case 'sharepoint_link':
                 sharepointLinkInput.style.display = 'block';
+                break;
+            case 'Website/HTML':
+                websiteInput.style.display = 'block';
                 break;
             case 'aws_dynamodb':
                 awsDynamoDBInput.style.display = 'block';
@@ -162,23 +210,55 @@
                 }
                 break;
             case 'aws_dynamodb':
-                const awsDynamoDBConnection = document.getElementById('aws_dynamodb_connection').value;
-                if (awsDynamoDBConnection.trim()) {
-                    formData.append('aws_dynamodb_connection', awsDynamoDBConnection);
+                // Only structured fields supported now
+                const dynamodbTable = document.getElementById('dynamodb_table_name').value;
+                const dynamodbRegion = document.getElementById('dynamodb_region').value;
+                const dynamodbAccessKey = document.getElementById('dynamodb_access_key').value;
+                const dynamodbSecretKey = document.getElementById('dynamodb_secret_key').value;
+
+                if (dynamodbTable.trim()) {
+                    formData.append('dynamodb_table_name', dynamodbTable.trim());
+                    if (dynamodbRegion.trim()) formData.append('dynamodb_region', dynamodbRegion.trim());
+                    if (dynamodbAccessKey.trim()) formData.append('dynamodb_access_key', dynamodbAccessKey.trim());
+                    if (dynamodbSecretKey.trim()) formData.append('dynamodb_secret_key', dynamodbSecretKey.trim());
                     source_provided = true;
                 }
                 break;
             case 'azure_cosmosdb':
-                const azureCosmosDBConnection = document.getElementById('azure_cosmosdb_connection').value;
-                if (azureCosmosDBConnection.trim()) {
-                    formData.append('azure_cosmosdb_connection', azureCosmosDBConnection);
+                // Only structured fields supported now
+                const cosmosUri = document.getElementById('cosmos_uri').value;
+                const cosmosDb = document.getElementById('cosmos_db').value;
+                const cosmosCollection = document.getElementById('cosmos_collection').value;
+
+                if (cosmosUri.trim() && cosmosDb.trim() && cosmosCollection.trim()) {
+                    formData.append('cosmos_uri', cosmosUri.trim());
+                    formData.append('cosmos_db', cosmosDb.trim());
+                    formData.append('cosmos_collection', cosmosCollection.trim());
+                    source_provided = true;
+                }
+                break;
+            case 'Website/HTML':
+                // Website URL input
+                const websiteLink = document.getElementById('website_link').value;
+                if (websiteLink && websiteLink.trim()) {
+                    formData.append('website_link', websiteLink.trim());
                     source_provided = true;
                 }
                 break;
             case 's3_bucket':
-                const s3BucketPath = document.getElementById('s3_bucket_path').value;
-                if (s3BucketPath.trim()) {
-                    formData.append('s3_bucket_path', s3BucketPath);
+                // Only structured fields supported now
+                const s3BucketName = document.getElementById('s3_bucket_name').value;
+                const s3ObjectKey = document.getElementById('s3_object_key').value;
+                const s3Region = document.getElementById('s3_region').value;
+                const s3AccessKey = document.getElementById('s3_access_key').value;
+                const s3SecretKey = document.getElementById('s3_secret_key').value;
+
+                if (s3BucketName.trim() && s3ObjectKey.trim()) {
+                    formData.append('s3_bucket_name', s3BucketName.trim());
+                    formData.append('s3_object_key', s3ObjectKey.trim());
+                    if (s3Region.trim()) formData.append('s3_region', s3Region.trim());
+                    if (s3AccessKey.trim()) formData.append('s3_access_key', s3AccessKey.trim());
+                    if (s3SecretKey.trim()) formData.append('s3_secret_key', s3SecretKey.trim());
                     source_provided = true;
                 }
                 break;

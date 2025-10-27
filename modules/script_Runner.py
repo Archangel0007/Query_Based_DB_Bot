@@ -22,14 +22,10 @@ def extract_code_blocks(text: str) -> List[Dict[str, str]]:
 	return blocks
 
 def run_python_code(code: str, outfile: Optional[str] = None, timeout: int = 10000, run_space_dir: Optional[str] = None) -> Dict[str, object]:
-	"""Run Python code in an isolated temp dir.
-
-	If a Run_Space directory is available (either passed in `run_space_dir` or a
-	sibling directory named 'Run_Space'), its contents will be copied into the
-	temp dir so the executed code can access dataset files like CSVs.
-	"""
+	if("```python" in code):
+		code = code.split("```python")[1].split("```")[0]
 	logger.info("run_python_code: entry (timeout=%s, run_space_dir=%s)", timeout, run_space_dir)
-
+	print(code)
 	# Prefer executing directly inside Run_Space so any generated files land there.
 	if run_space_dir is None:
 		candidate = os.path.join(os.path.dirname(__file__), "Run_Space")
@@ -173,7 +169,7 @@ def save_generated_code(code: str, filename: str = "generated_code.py") -> None:
 
 if __name__ == "__main__":
 
-	filepath = '../Run_Space/34d91b7d-ed70-4fba-a84b-3cf0a4ad0953/create_Database_Script.py'
+	filepath = '../Run_Space/045e0119-4cb9-470c-b27a-16a60108d40d/insert_Data_Script.py'
 
 	if not os.path.exists(filepath):
 		logger.error(f"File not found: {filepath}")
