@@ -485,19 +485,45 @@ def start_generation():
             # Ask converter to write directly into the task folder and return absolute paths
             written_files = convert_html_to_csv(website_url, output_dir=task_dir)
 
-            # Ensure the returned files actually exist and record basenames
+            # Ensure the returned files actually exist and record basenames.
+            # Some converters may have small write delays; poll briefly for files to appear.
             moved = [os.path.basename(p) for p in written_files if os.path.exists(p)]
             files_uploaded = bool(moved)
             task_data_path = task_dir
-            add_log(task_id, f"✅ Website conversion produced files: {moved}")
+            add_log(task_id, f"✅ Website conversion initial result: {moved}")
+
             if not moved:
-                # Conversion completed but produced no files; return clear error to client
-                saved = [f for f in os.listdir(task_dir) if not f.startswith('.')]
+                # Poll for a short time to allow converter to finish writing files to disk.
+                max_wait = 12.0  # seconds
+                interval = 0.5
+                waited = 0.0
+                add_log(task_id, f"Waiting up to {max_wait}s for converter to write files...")
+                while waited < max_wait and not moved:
+                    time.sleep(interval)
+                    waited += interval
+                    # re-check for any CSV files in the task folder
+                    try:
+                        current_csvs = [f for f in os.listdir(task_dir) if f.lower().endswith('.csv') and not f.startswith('.')]
+                    except Exception:
+                        current_csvs = []
+                    if current_csvs:
+                        moved = current_csvs
+                        files_uploaded = True
+                        add_log(task_id, f"Detected CSVs after waiting: {moved}")
+                        break
+
+            if not moved:
+                # Conversion completed (or returned) but produced no files; return clear error to client
+                try:
+                    saved = [f for f in os.listdir(task_dir) if not f.startswith('.')]
+                except Exception:
+                    saved = []
+                app.logger.error(f"Website conversion produced no files. Written: {written_files}; Saved in task dir: {saved}")
                 return jsonify({
                     "error": "Website conversion completed but no CSVs were produced.",
                     "written_files": written_files,
                     "saved_files": saved,
-                    "hint": "Check the target URL, page access, or conversion logs on the server."
+                    "hint": "Check the target URL, page access, converter logs on the server, or increase the wait timeout."
                 }), 500
         except Exception as e:
             app.logger.error(f"Website conversion failed: {e}", exc_info=True)

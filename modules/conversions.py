@@ -17,6 +17,8 @@ from typing import List, Dict, Any
 from bs4 import BeautifulSoup
 from markdownify import markdownify as md
 from dotenv import load_dotenv
+import argparse
+import sys
 
 # Optional Gemini client
 try:
@@ -499,3 +501,34 @@ def process_uploaded_files(directory_path: str) -> List[str]:
 
     logging.info(f"File conversion process completed for directory: {directory_path}. Converted {len(converted)} files.")
     return converted
+
+
+def _cli_main():
+    """Simple CLI entrypoint to test convert_html_to_csv manually.
+
+    Usage:
+      python -m modules.conversions <url> [-o OUTPUT_DIR]
+    """
+    parser = argparse.ArgumentParser(prog="convert_html_to_csv",
+                                     description="Fetch a web page and extract tables/structured data to CSV(s).")
+    parser.add_argument('url', help='URL of the webpage to convert')
+    parser.add_argument('-o', '--out', dest='output_dir', default=None,
+                        help='Output directory to write CSV files (defaults to module OUTPUT_DIR)')
+    args = parser.parse_args()
+
+    try:
+        print(f"[CLI] Converting URL: {args.url} -> output_dir={args.output_dir or OUTPUT_DIR}")
+        written = convert_html_to_csv(args.url, output_dir=args.output_dir)
+        if not written:
+            print("[CLI] No files were written.")
+            sys.exit(2)
+        print("[CLI] Written files:")
+        for p in written:
+            print(p)
+    except Exception as e:
+        print(f"[CLI] Conversion failed: {e}", file=sys.stderr)
+        raise
+
+
+if __name__ == '__main__':
+    _cli_main()
