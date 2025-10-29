@@ -169,7 +169,7 @@ def save_generated_code(code: str, filename: str = "generated_code.py") -> None:
 
 if __name__ == "__main__":
 
-	filepath = '../Run_Space/045e0119-4cb9-470c-b27a-16a60108d40d/insert_Data_Script.py'
+	filepath = 'Run_Space/0b84baf9-ec67-43a9-9e1c-c4254f449825/insert_Data_Script.py'
 
 	if not os.path.exists(filepath):
 		logger.error(f"File not found: {filepath}")
@@ -180,7 +180,7 @@ if __name__ == "__main__":
 			python_code = f.read()
 		
 		logger.info(f"Executing code from {filepath}")
-		result = run_python_code(python_code)
+		result = run_python_code(python_code,'..Run_Space/0b84baf9-ec67-43a9-9e1c-c4254f449825')
 
 		print("\n--- Execution Result ---")
 		print(f"Return Code: {result['returncode']}")

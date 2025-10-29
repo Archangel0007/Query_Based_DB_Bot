@@ -75,7 +75,7 @@ def generate_order(order_id):
     }
 
 # Generate data for 10 orders
-orders = [generate_order(i) for i in range(1, 11)]
+orders = [generate_order(i) for i in range(1, 1001)]
 
 csv_file_path = 'SharePoint_CSV/orders.csv'
 

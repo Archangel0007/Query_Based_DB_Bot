@@ -99,6 +99,14 @@
                 <textarea id="schema_context" name="schema_context" rows="4" placeholder="e.g., A customer can have many orders. An order belongs to one customer." required></textarea>
                 <button type="submit">Generate Dimensional Model</button>
             </form>
+
+            <!-- Logs panel placed immediately after the Generate button as requested -->
+            <div id="logs-wrapper" class="logs-wrapper" style="margin-top:12px;">
+                <button id="logs-toggle-btn" class="btn">Show logs</button>
+                <div id="logs-panel" style="display:none; margin-top:8px;">
+                    <div id="logs-container" style="max-height:240px; overflow:auto; border:1px solid var(--border-color); padding:8px; background:var(--panel-bg-color); border-radius:4px;"></div>
+                </div>
+            </div>
         </div>
 
         <div class="review-container" id="review-container" style="display: none;">
@@ -113,6 +121,7 @@
                 <!-- Chat messages will be injected here -->
             </div>
         </div>
+        
     </div>
 </div>
 {% endblock %}
@@ -127,6 +136,34 @@
         const reviewContainer = document.getElementById('review-container');
         const chatSection = document.getElementById('chat-section');
         const schemaImageContainer = document.getElementById('schema-image-container');
+        const logsToggleBtn = document.getElementById('logs-toggle-btn');
+        const logsContainer = document.getElementById('logs-container');
+        const logsWrapper = document.getElementById('logs-wrapper');
+
+        // Helper to insert an element after a reference node
+        function insertAfter(newNode, referenceNode) {
+            referenceNode.parentNode.insertBefore(newNode, referenceNode.nextSibling);
+        }
+
+        // Move logs under the chat container when chat is visible; otherwise keep logs below the generate form
+        function relocateLogs() {
+            try {
+                // If chatSection is visible (pipeline in motion), move logs below chat container
+                if (chatSection && chatSection.style.display && chatSection.style.display !== 'none') {
+                    // ensure logsWrapper sits right after the chat container
+                    if (logsWrapper && chatContainer && chatContainer.parentNode) {
+                        insertAfter(logsWrapper, chatContainer);
+                    }
+                } else {
+                    // keep logs inside the form container, directly after the form
+                    if (logsWrapper && form && form.parentNode) {
+                        insertAfter(logsWrapper, form);
+                    }
+                }
+            } catch (err) {
+                console.error('relocateLogs error', err);
+            }
+        }
         const submitReviewBtn = document.getElementById('submit-review-btn');
     
     const dataMediumSelect = document.getElementById('data_medium');
@@ -174,6 +211,27 @@
 
     // Initial call to set the correct visibility on page load
     showSelectedMediumInput();
+
+    // Initialize logs panel: hide container and wire toggle button
+    if (logsToggleBtn && logsContainer) {
+        const logsPanel = document.getElementById('logs-panel');
+        // start hidden
+        logsPanel.style.display = 'none';
+        logsContainer.style.display = 'block'; // container inside panel should be visible when panel is shown
+        logsToggleBtn.textContent = 'Show logs';
+        logsToggleBtn.addEventListener('click', () => {
+            if (logsPanel.style.display === 'none') {
+                logsPanel.style.display = 'block';
+                logsToggleBtn.textContent = 'Hide logs';
+            } else {
+                logsPanel.style.display = 'none';
+                logsToggleBtn.textContent = 'Show logs';
+            }
+        });
+    }
+
+    // Ensure logs start in the correct location on page load
+    relocateLogs();
 
     // Add event listener for changes in the dropdown
     dataMediumSelect.addEventListener('change', showSelectedMediumInput);
@@ -281,12 +339,16 @@
                 taskId = data.task_id;
                 formContainer.style.display = 'none';
                 chatSection.style.display = 'block'; // Show chat after upload
+                // Move logs to sit beneath the chat container now that pipeline is running
+                relocateLogs();
                 pollingInterval = setInterval(pollStatus, 2000);
             } else {
             const errorData = await response.json();
             alert('Error starting generation: ' + (errorData.error || 'Unknown error'));
             submitButton.disabled = false;
                 spinner.style.display = 'none';
+                // Ensure logs remain with the form if generation failed
+                relocateLogs();
             }
         });
 
@@ -378,6 +440,37 @@
             });
             chatContainer.scrollTop = chatContainer.scrollHeight;
 
+            // Update logs panel (system logs captured from server prints). Render fully expanded entries.
+            if (logsContainer) {
+                logsContainer.innerHTML = '';
+                const logs = data.system_logs || [];
+                if (logs.length === 0) {
+                    const none = document.createElement('div');
+                    none.className = 'muted';
+                    none.textContent = 'No logs available yet.';
+                    logsContainer.appendChild(none);
+                } else {
+                    logs.forEach(l => {
+                        const entry = document.createElement('div');
+                        entry.className = 'log-entry';
+                        const hdr = document.createElement('div');
+                        hdr.className = 'log-header';
+                        const ts = document.createElement('span');
+                        ts.className = 'log-ts';
+                        ts.textContent = l.time ? new Date(l.time).toLocaleString() : '';
+                        hdr.appendChild(ts);
+                        const body = document.createElement('pre');
+                        body.textContent = l.text || '';
+                        body.style.whiteSpace = 'pre-wrap';
+                        entry.appendChild(hdr);
+                        entry.appendChild(body);
+                        logsContainer.appendChild(entry);
+                    });
+                    // scroll to bottom so latest logs are visible
+                    logsContainer.scrollTop = logsContainer.scrollHeight;
+                }
+            }
+
             // Show schema image if available
             if (data.schema_image_url) {
                 const imageUrl = `${data.schema_image_url}?t=${new Date().getTime()}`;
@@ -400,6 +493,9 @@
         }
     </script>
 {% endblock %}
+    
+    <!-- Logs panel markup inserted outside scripts so elements exist for JS references -->
+    {% block after_body %}{% endblock %}
 <!--
 [PROMPT_SUGGESTION]How can I deploy this Flask application to a cloud service like Heroku or Vercel?[/PROMPT_SUGGESTION]
 [PROMPT_SUGGESTION]Modify the background task processing to use a more robust job queue like Celery with Redis.[/PROMPT_SUGGESTION]

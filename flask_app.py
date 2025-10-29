@@ -8,6 +8,8 @@ from flask import Flask, render_template, request, jsonify, send_from_directory
 import shutil
 import json
 import json
+import logging
+import builtins
 
 # -------------------- INITIAL SETUP --------------------
 print("[INIT] Starting Flask pipeline service...")
@@ -41,6 +43,62 @@ app.config['TEMPLATES_AUTO_RELOAD'] = True
 print(f"[CONFIG] Upload folder set to: {app.config['UPLOAD_FOLDER']}")
 
 tasks = {}
+# Thread-local to keep track of the currently active task for print capture
+current_task = threading.local()
+
+# Save original print and override it to capture terminal output into task system logs
+_original_print = builtins.print
+def _attach_system_log(task_id, message):
+    try:
+        if task_id in tasks:
+            tasks[task_id].setdefault('system_logs', []).append({
+                'time': datetime.now(timezone.utc).isoformat(),
+                'text': message
+            })
+    except Exception:
+        # avoid raising from logging helpers
+        pass
+
+def _custom_print(*args, **kwargs):
+    # Write to original stdout
+    _original_print(*args, **kwargs)
+    try:
+        msg = ' '.join(str(a) for a in args)
+        task_id = getattr(current_task, 'task_id', None)
+        if task_id and task_id in tasks:
+            _attach_system_log(task_id, msg)
+    except Exception:
+        pass
+
+# Monkeypatch builtins.print to capture prints. Keep idempotent check.
+if builtins.print is not _custom_print:
+    builtins.print = _custom_print
+
+# Logging handler to capture logging module output and attach it to the current task
+class TaskLogHandler(logging.Handler):
+    def __init__(self):
+        super().__init__()
+        self.setLevel(logging.INFO)
+        self.formatter = logging.Formatter('%(asctime)s - %(levelname)s - %(message)s')
+
+    def emit(self, record):
+        try:
+            msg = self.format(record)
+            task_id = getattr(current_task, 'task_id', None)
+            if task_id and task_id in tasks:
+                # Use record.created (epoch) converted to ISO to preserve original time
+                ts = datetime.fromtimestamp(record.created, timezone.utc).isoformat()
+                tasks[task_id].setdefault('system_logs', []).append({
+                    'time': ts,
+                    'text': msg
+                })
+        except Exception:
+            # Never let logging capture raise
+            pass
+
+# Attach our handler to the root logger so library logs (and Flask/werkzeug) are captured.
+_task_log_handler = TaskLogHandler()
+logging.getLogger().addHandler(_task_log_handler)
 
 
 def generate_and_register_schema(task_id, schema_context):
@@ -148,6 +206,8 @@ def handle_user_upload(files, task_id):
 # -------------------- CORRECTION LOOP --------------------
 def run_correction_loop(task_id, feedback):
     print(f"[CORRECTION] Starting correction loop for task {task_id[:8]}")
+    # mark current thread prints as belonging to this task
+    current_task.task_id = task_id
     task_dir = create_task_dir(task_id)
 
     def get_path(filename):
@@ -177,10 +237,18 @@ def run_correction_loop(task_id, feedback):
         set_task_status(task_id, f"Error: {e}")
         add_log(task_id, f"❌ Error during correction loop: {e}")
         app.logger.error(f"Error in task {task_id}: {e}", exc_info=True)
+    finally:
+        # clear thread-local association
+        try:
+            del current_task.task_id
+        except Exception:
+            pass
 
 # -------------------- MAIN PIPELINE --------------------
 def run_processing_pipeline(task_id, source_path, context):
     print(f"[PIPELINE] Starting processing pipeline for Task {task_id[:8]}")
+    # ensure prints inside this background thread are attributed to this task
+    current_task.task_id = task_id
     base_run_space = app.config['UPLOAD_FOLDER']
     task_dir = create_task_dir(task_id)
 
@@ -214,10 +282,18 @@ def run_processing_pipeline(task_id, source_path, context):
         set_task_status(task_id, f"Error: {e}")
         add_log(task_id, f"❌ Error during generation: {e}")
         app.logger.error(f"Error in task {task_id}: {e}", exc_info=True)
+    finally:
+        # clear thread-local association
+        try:
+            del current_task.task_id
+        except Exception:
+            pass
 
 # -------------------- TESTING AND REVIEW --------------------
 def run_testing_and_review(task_id, context):
     print(f"[TESTING] Running schema testing and review for Task {task_id[:8]}")
+    # attribute prints to this task while running tests
+    current_task.task_id = task_id
     base_run_space = app.config['UPLOAD_FOLDER']
     task_dir = os.path.join(base_run_space, task_id)
 
@@ -276,10 +352,19 @@ def run_testing_and_review(task_id, context):
     set_task_status(task_id, "Awaiting user review")
     print("[TESTING] Awaiting user feedback...")
     add_log(task_id, "Please review the schema: type 'yes' to continue, or 'no' + corrections.")
+    try:
+        pass
+    finally:
+        try:
+            del current_task.task_id
+        except Exception:
+            pass
 
 # -------------------- CONTINUE PIPELINE --------------------
 def continue_pipeline(task_id):
     print(f"[CONTINUE] Continuing pipeline for Task {task_id[:8]}")
+    # attribute prints in this thread to the task
+    current_task.task_id = task_id
     base_run_space = app.config['UPLOAD_FOLDER']
     task_dir = os.path.join(base_run_space, task_id)
 
@@ -337,6 +422,11 @@ def continue_pipeline(task_id):
         set_task_status(task_id, f"Error: {e}")
         add_log(task_id, f"❌ Error: {e}")
         app.logger.error(f"Error in task {task_id}: {e}", exc_info=True)
+    finally:
+        try:
+            del current_task.task_id
+        except Exception:
+            pass
 
 # -------------------- ROUTES --------------------
 @app.route('/')
@@ -359,6 +449,8 @@ def start_generation():
     print("[ROUTE] POST /start_generation")
     task_id = str(uuid.uuid4())
     print(f"[TASK] New task created: {task_id}")
+    # attribute prints during this request to the created task
+    current_task.task_id = task_id
 
     data_medium = request.form.get('data_medium')
     files = request.files.getlist('csv_files')
@@ -575,6 +667,8 @@ def start_generation():
     tasks[task_id] = {
         "status": "Starting...",
         "logs": [],
+        # system terminal logs captured for debugging and display
+        "system_logs": [],
         # images will be registered as they are generated; keep list for history
         "images": [],
         "schema_image_url": "",
@@ -586,6 +680,7 @@ def start_generation():
     thread = threading.Thread(target=run_processing_pipeline, args=(task_id, source_path, context))
     thread.start()
 
+    # leave request; thread will capture subsequent background prints
     return jsonify({"task_id": task_id})
 
 @app.route('/status/<task_id>')

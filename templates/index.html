@@ -15,16 +15,21 @@
 </head>
 <body>
     <nav class="navbar">
-        <a href="{{ url_for('upload') }}" class="navbar-brand">🚀 Smart Data Crafter</a>
-        <div class="navbar-right">
+        <div class="navbar-left">
+            <a href="{{ url_for('upload') }}" class="navbar-brand">🚀 Smart Data Crafter</a>
             <div class="navbar-links">
                 <a href="{{ url_for('upload') }}" class="{{ 'active' if active_page == 'upload' else '' }}">Data Ingestion</a>
                 <a href="{{ url_for('dashboard') }}" class="{{ 'active' if active_page == 'dashboard' else '' }}">Analytics</a>
             </div>
+        </div>
+        <div class="navbar-right">
             <div class="theme-switch-wrapper">
                 <label class="theme-switch" for="theme-checkbox">
                     <input type="checkbox" id="theme-checkbox" />
-                    <div class="slider round"></div>
+                    <div class="slider round">
+                        <span class="icon-sun">☀️</span>
+                        <span class="icon-moon">🌙</span>
+                    </div>
                 </label>
                 <span class="theme-switch-label">Light/Dark</span>
             </div>
