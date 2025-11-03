@@ -41,22 +41,35 @@ def build_prompt(metadata, user_context):
         5.  **Output JSON**: Return ONLY a single JSON object that describes the dimensional model. Do not include any other text, explanations, or markdown.
         6.  **Column Data Types**: Use standard SQL data types (e.g., INTEGER, VARCHAR, DECIMAL, TIMESTAMP) for column definitions.
         7.  **No New Columns**: Do Not create New columns for the tables. Neither Fact nor Dimension tables should have any columns that are not present in the source metadata.
+        8.  **Do Not Skip out any columns**: You are to retain all the columns as presented in the original metadata. Skipping out on any of them means data Loss which is STRICTLY not allowed.
+        9.  **Reasoning**: Give you reasoning in plain natural language in points. One point for each tables you are creating.
         The JSON output must follow this structure:
         {
-          "tables": [
-            {
-              "table_name": "string",
-              "table_type": "Fact" | "Dimension",
-              "description": "A brief description of the table's purpose.",
-              "columns": [
-                {
-                  "column_name": "string",
-                  "data_type": "string (e.g., INTEGER, VARCHAR, DECIMAL, TIMESTAMP)",
-                }
-              ]
-            }
-          ]
-        }
+  "reasoning": [
+    {
+        [
+  {
+    "step": "Analyze the Tables",
+    "details": "The provided metadata consists of a single table 'orders' that includes information about orders, customers, products, and shipping details."
+  },
+  ],
+  "conceptual_data": {
+    "tables": [
+      {
+        "table_name": "string",
+        "table_type": "Fact | Dimension",
+        "description": "A brief description of the table's purpose.",
+        "columns": [
+          {
+            "column_name": "string",
+            "data_type": "string (e.g., INTEGER, VARCHAR, DECIMAL, TIMESTAMP)"
+          }
+        ]
+      }
+    ]
+  }
+}
+
         """
     )
 
@@ -76,11 +89,12 @@ def generate_dimensional_model(metadata_file=None, user_context_file=None, outpu
         raise ValueError("All file paths (metadata, context, output) must be provided.")
 
     logger.info("🔍 Loading source metadata and user context...")
-    metadata = load_json_file(metadata_file)
+    metadata_obj = load_json_file(metadata_file)
     user_context = load_text_file(user_context_file)
 
     logger.info("✍️ Building prompt for dimensional modeling...")
-    prompt = build_prompt(metadata, user_context)
+    # Pass the Python object directly to build_prompt, which will handle serialization.
+    prompt = build_prompt(metadata_obj, user_context)
 
     logger.info("🤖 Calling Gemini to generate the dimensional model...")
     result_text = api_call(prompt)
@@ -89,10 +103,19 @@ def generate_dimensional_model(metadata_file=None, user_context_file=None, outpu
         result_text = result_text[7:-3].strip()
 
     try:
-        dimensional_model = json.loads(result_text)
+        response_data = json.loads(result_text)
+        conceptual_data = response_data.get("conceptual_data")
+        reasoning = response_data.get("reasoning")
+
+        if not conceptual_data:
+            logger.error("❌ 'conceptual_data' not found in the Gemini response.")
+            raise ValueError("'conceptual_data' key missing from LLM response.")
+
         with open(output_json, "w", encoding="utf-8") as f:
-            json.dump(dimensional_model, f, indent=4)
+            json.dump(conceptual_data, f, indent=4)
         logger.info(f"✅ Dimensional model saved to: {output_json}")
+
+        return reasoning
     except json.JSONDecodeError:
         logger.error("❌ Failed to parse JSON from Gemini response. Saving raw output for debugging.")
         with open(output_json + ".error.txt", "w", encoding="utf-8") as f:

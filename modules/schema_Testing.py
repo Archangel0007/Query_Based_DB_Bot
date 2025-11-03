@@ -3,6 +3,7 @@ import re
 import os
 from dotenv import load_dotenv
 from .gemini_Call import api_call
+import json
 
 def run_phase1(user_query_path, output_path):
     """Generate Phase 1 testcases from a user query and write to output_path.
@@ -13,6 +14,27 @@ def run_phase1(user_query_path, output_path):
         raise FileNotFoundError(f"❌ Missing file: {user_query_path}")
     with open(user_query_path, "r", encoding="utf-8") as f:
         user_query = f.read().strip()
+
+    # Define the JSON structure outside the f-string to avoid formatting errors
+    json_structure_example = """
+{
+  "reasoning": [
+    {
+      "step": "Test case description",
+      "details": "Why the testcase was chosen and what it tests for."
+    }
+  ],
+  "Test Cases": [
+      {
+          "serial_number": 1,
+          "testcase_description": "...",
+          "reasoning": "...",
+          "category": "...",
+          "severity": "..."
+      }
+  ]
+}
+"""
 
     prompt_phase1 = f"""
 You are a senior database QA expert and test-case strategist.
@@ -28,44 +50,35 @@ Task:
   - optional: category (PrimaryKey, ForeignKey, DataType, Relationship, NullConstraint, Index, UniqueConstraint)
   - optional: severity (Critical, High, Medium, Low)
 Guidance for producing the BEST testcases:
-1. Think beyond the literal query: Anticipate all possible database schema issues related to the query.
-2. Edge case focus: Include unusual or tricky scenarios such as self-referencing tables, nullable vs non-nullable inconsistencies, data type mismatches between primary and foreign keys, multi-column foreign keys, many-to-many relationship issues, orphaned records, invalid defaults.
-3. Coverage across categories: ensure PrimaryKey, ForeignKey, DataType, Relationship, NullConstraint, Index, UniqueConstraint are considered where relevant.
-4. Reasoning clarity: Provide reasoning for each testcase.
-5. No repetition: Make every testcase unique.
-Output format STRICT: ### testcases_prompt.json followed by a single JSON array (no markdown, no fences, only the array).
+1.  Think beyond the literal query: Anticipate all possible database schema issues related to the query.
+2.  Edge case focus: Include unusual or tricky scenarios such as self-referencing tables, nullable vs non-nullable inconsistencies, data type mismatches between primary and foreign keys, multi-column foreign keys, many-to-many relationship issues, orphaned records, invalid defaults.
+3.  Coverage across categories: ensure PrimaryKey, ForeignKey, DataType, Relationship, NullConstraint, Index, UniqueConstraint are considered where relevant.
+4.  Reasoning clarity: Provide reasoning for each testcase.
+5.  No repetition: Make every testcase unique.
+Output format STRICT: Return ONLY a single JSON object. Do not include any other text, explanations, or markdown.
+The JSON output must follow this structure:
+{json_structure_example}
 """
 
     output_text = api_call(prompt_phase1)
     clean_output = re.sub(r"```json|```", "", output_text, flags=re.DOTALL).strip()
 
-    # Primary parsing: look for the explicit header we ask the model to include
     try:
-        parts = clean_output.split("### testcases_prompt.json")
-        if len(parts) >= 2:
-            testcases_json = parts[1].strip()
-            testcases_json = re.sub(r"^#+.*json", "", testcases_json).strip()
-        else:
-            # Fallback: try to find the first JSON array in the output
-            m = re.search(r"(\[\s*\{[\s\S]*?\}\s*\])", clean_output)
-            if m:
-                testcases_json = m.group(1).strip()
-            else:
-                # Last resort: write the cleaned output as-is so downstream
-                # steps can at least see what the model returned.
-                testcases_json = clean_output
+        response_data = json.loads(clean_output)
+        test_cases = response_data.get("Test Cases")
+        reasoning = response_data.get("reasoning")
 
         out_dir = os.path.dirname(output_path)
         if out_dir:
             os.makedirs(out_dir, exist_ok=True)
         with open(output_path, "w", encoding="utf-8") as f:
-            f.write(testcases_json)
+            json.dump(test_cases, f, indent=2)
 
-        print(f"✅ Phase 1 done: {output_path} created (len={len(testcases_json)})")
-        return True
+        print(f"✅ Phase 1 done: {output_path} created.")
+        return True, reasoning
     except Exception as e:
         print("⚠️ Phase 1 failed.\nOutput:\n", clean_output, "\nError:", e)
-        return False
+        return False, None
 
 def run_phase2(plantuml_code_path, testcases_path, output_dir):
     if not os.path.exists(plantuml_code_path):
@@ -79,6 +92,18 @@ def run_phase2(plantuml_code_path, testcases_path, output_dir):
     with open(testcases_path, "r", encoding="utf-8") as f:
         testcases_prompt = f.read()
 
+    json_structure_example = """
+{
+  "reasoning": [
+    {
+      "step": "Validation Summary",
+      "details": "A brief summary of the validation process, including the number of tests passed and failed."
+    }
+  ],
+  "testcases": [ {"serial_number": 1, "status": "pass/fail", "notes": "..."} ],
+  "errors": [ {"testcase_serial_number": 2, "error_description": "..."} ]
+}
+"""
     prompt_phase2 = f"""
     You are a database QA expert.
 
@@ -88,41 +113,34 @@ def run_phase2(plantuml_code_path, testcases_path, output_dir):
 
     Task:
     - Execute the testcases on the schema.
-    Output format STRICT:
-    ### testcases.json
-    [ ... ]
-    ### errors.json
-    [ ... ]
-    Rules:
-    - No markdown or fences, only JSON arrays after each header.
+    - Provide reasoning for the validation process, summarizing the findings.
+    Output format STRICT: Return ONLY a single JSON object. Do not include any other text, explanations, or markdown.
+    The JSON output must follow this structure:
+    {json_structure_example}
     """
 
-    model = genai.GenerativeModel("gemini-2.5-flash")
-    response = model.generate_content(prompt_phase2)
-    output_text = response.text.strip()
+    output_text = api_call(prompt_phase2)
     clean_output = re.sub(r"```json|```", "", output_text, flags=re.DOTALL).strip()
 
     try:
-        testcases_part, errors_part = clean_output.split("### errors.json")
-        testcases_json = testcases_part.split("### testcases.json")[1].strip()
-        errors_json = errors_part.strip()
-
-        testcases_json = re.sub(r"^#+.*json", "", testcases_json).strip()
-        errors_json = re.sub(r"^#+.*json", "", errors_json).strip()
+        response_data = json.loads(clean_output)
+        testcases_results = response_data.get("testcases", [])
+        errors_found = response_data.get("errors", [])
+        reasoning = response_data.get("reasoning")
 
         # Write outputs to provided output_dir
         if output_dir:
             os.makedirs(output_dir, exist_ok=True)
             with open(os.path.join(output_dir, "testcases.json"), "w", encoding="utf-8") as f:
-                f.write(testcases_json)
+                json.dump(testcases_results, f, indent=2)
             with open(os.path.join(output_dir, "errors.json"), "w", encoding="utf-8") as f:
-                f.write(errors_json)
+                json.dump(errors_found, f, indent=2)
 
         print(f"✅ Phase 2 done: testcases.json and errors.json created in {output_dir}")
-        return True
+        return True, reasoning
     except Exception as e:
         print("⚠️ Phase 2 failed.\nOutput:\n", clean_output, "\nError:", e)
-        return False
+        return False, None
 
 # ==========================================
 # ENTRY POINT

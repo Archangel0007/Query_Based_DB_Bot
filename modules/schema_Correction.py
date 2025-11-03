@@ -34,6 +34,17 @@ def build_prompt(errors: List[Dict[str, Any]], puml: str, query_text: str) -> st
     Construct a strong, unambiguous prompt for the LLM to correct the PlantUML.
     The goal: produce ONLY the corrected PlantUML content with no explanation.
     """
+    json_structure_example = """
+{
+  "reasoning": [
+    {
+      "step": "Description of a correction made",
+      "details": "Detailed explanation of why this change was necessary to fix an error."
+    }
+  ],
+  "plantuml_code": "string containing the full corrected PlantU-ML code"
+}
+"""
     errors_summary = json.dumps(errors, indent=2, ensure_ascii=False)
     prompt = textwrap.dedent(f"""
     You are an expert at translating requirement specifications and error reports into
@@ -41,17 +52,14 @@ def build_prompt(errors: List[Dict[str, Any]], puml: str, query_text: str) -> st
       1) Requirement text (query.txt) describing the domain and intended data model.
       2) The original PlantUML source (data.puml).
       3) A list of detected errors (errors.json) that must be corrected.
-
     TASK:
     - Fix ONLY the issues explicitly described in the errors list, and make conservative
       improvements to ensure correctness of types and FK relationships described there.
     - Preserve entity/relationship names where possible. Do not invent new entities unless
       required to fix referential integrity or naming conflicts.
-    - Ensure data types align: foreign key columns must use the exact same type as the referenced primary keys.
-    - Convert clearly-date fields that are declared as VARCHAR into DATE/DATETIME types, if stated in errors.
-    - For currency/money columns indicated in the errors use NUMERIC/DECIMAL (or DECIMAL(precision,scale)).
-    - Provide valid PlantUML syntax; do not include backticks or Markdown formatting.
-    - Output ONLY the corrected PlantUML source. No commentary, no JSON wrapper, no extra text.
+    - Output ONLY a single JSON object. No commentary, no other text.
+    The JSON output must follow this structure:
+    {json_structure_example}
 
     INPUT - Requirement Context (query.txt):
     -------------------------
@@ -65,14 +73,6 @@ def build_prompt(errors: List[Dict[str, Any]], puml: str, query_text: str) -> st
     -------------------------
     {errors_summary}
 
-    NOTE: If multiple plausible fixes exist, prefer simple explicit fixes:
-      - change a column's data type to match the referenced PK,
-      - change VARCHAR dates to DATE or DATETIME,
-      - change DECIMAL/NUMERIC usage for currency,
-      - keep attribute order and formatting consistent with the original file,
-      - keep comments and non-problematic annotations intact.
-
-    Return the corrected PlantUML file contents now.
     """).strip()
     return prompt
 
@@ -101,21 +101,24 @@ def correction(errors_path: str, puml_path: str, query_path: str):
     prompt = build_prompt(errors, puml, query_text)
 
     try:
-        corrected = api_call(prompt)
+        response_text = api_call(prompt)
+        clean_output = re.sub(r"```json|```", "", response_text, flags=re.DOTALL).strip()
+        response_data = json.loads(clean_output)
+
+        corrected_puml = response_data.get("plantuml_code")
+        reasoning = response_data.get("reasoning")
+
+        if not corrected_puml:
+            raise ValueError("'plantuml_code' key missing from LLM response.")
+
+        save_output(corrected_puml, puml_path)
+        return reasoning
+
     except Exception as e:
-        print("LLM call failed:", str(e))
-        print("If you don't have the google-genai client installed, run:")
-        print("  pip install google-genai")
-        print("Or api_call() to your environment.")
-        sys.exit(3)
-
-    corrected = corrected.strip()
-    if "@startuml" not in corrected and "@enduml" not in corrected:
-
-        if "@startuml" in puml and "@enduml" in puml:
-            corrected = "@startuml\n" + corrected + "\n@enduml"
-
-    save_output(corrected, puml_path)
+        print(f"⚠️ Correction failed: {e}. Saving raw output for debugging.")
+        with open(puml_path + ".correction-error.txt", "w", encoding="utf-8") as f:
+            f.write(response_text)
+        raise
 
 if __name__ == "__main__":
     correction("Run_Space/errors.json", "Run_Space/relationship_schema.puml", "Run_Space/refined_User_Query.txt")

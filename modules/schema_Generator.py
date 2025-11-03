@@ -35,11 +35,23 @@ def build_prompt(dimensional_model, schema_context):
     """Builds a structured Gemini prompt from the dimensional model."""
     system_instructions = (
         """You are a precise data architect assistant. 
-        Given a suggested Model/ Table information in the form of JSON,from the user provided external context and metadata of the orginal data , infer the relationships (primary keys and foreign keys) between them. 
-        Output ONLY a PlantUML ER diagram (no prose). 
-        Follow strict PlantUML ER syntax with @startuml ... @enduml. 
-        Mark cardinalities (1--N, N--N, 1--1) clearly using PlantUML conventions. 
-        Do not include any explanations or text outside of the UML code."""
+        Given a suggested Model/ Table information in the form of JSON,from the user provided external context and metadata of the orginal data , infer the relationships (primary keys and foreign keys) between them.  
+        Follow strict PlantUML ER syntax with @startuml ... @enduml. Mark cardinalities (1--N, N--N, 1--1) clearly.
+        Reasoning: Give you reasoning in plain natural language in points. One point for each tables you are creating.
+        Your output MUST be a single JSON object with the following structure. Do not include any other text, explanations, or markdown.
+        
+        The JSON output must follow this structure:
+        {
+  "reasoning": [
+    {
+      "step": "Relation built between the tables",
+      "details": "Why the relations was chosen. what all choices were made to reach the decision like PRimary Keys and Foreign keys"
+    }
+  ],
+  "plantuml_code": "string"
+}
+
+"""
     )
 
     context_instructions = f"\n\nUse this additional context provided by the user to guide your schema design:\n---USER CONTEXT---\n{schema_context}\n---END USER CONTEXT---"
@@ -172,15 +184,29 @@ def generate_schema(dimensional_model_path, output_puml_path, output_png_path, s
     result_text = api_call(prompt)
     if result_text.startswith("```plantuml"):
         result_text = result_text[11:-3].strip()
+    elif result_text.startswith("```json"):
+        result_text = result_text[7:-3].strip()
 
-    logger.info("💾 Saving PlantUML output...")
-    puml_safe = save_plantuml(result_text, out_path=output_puml_path)
+    try:
+        response_data = json.loads(result_text)
+        plantuml_code = response_data.get("plantuml_code")
+        reasoning = response_data.get("reasoning")
 
-    logger.info("🖼 Rendering PNG from PlantUML...")
-    png_path = render_plantuml_to_png(puml_path=puml_safe, output_png_path=output_png_path)
+        if not plantuml_code:
+            raise ValueError("'plantuml_code' key missing from LLM response.")
 
-    logger.info("✅ Schema generation complete.")
-    return png_path
+        logger.info("💾 Saving PlantUML output...")
+        puml_safe = save_plantuml(plantuml_code, out_path=output_puml_path)
+
+        logger.info("🖼 Rendering PNG from PlantUML...")
+        png_path = render_plantuml_to_png(puml_path=puml_safe, output_png_path=output_png_path)
+
+        logger.info("✅ Schema generation complete.")
+        return png_path, reasoning
+    except (json.JSONDecodeError, ValueError) as e:
+        logger.error(f"❌ Failed to parse PlantUML from Gemini response: {e}. Saving raw output for debugging.")
+        save_plantuml(result_text, out_path=output_puml_path + ".error.puml")
+        raise
 
 def schema_correction(user_input, puml_path, png_path):
     """Apply corrections to the current schema based on user input."""

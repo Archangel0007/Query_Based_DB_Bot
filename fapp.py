@@ -10,21 +10,7 @@ import json
 import json
 import logging
 import builtins
-from werkzeug.utils import safe_join
-from flask import send_from_directory, abort
-from markupsafe import escape
 
-from flask import send_file, abort
-import os
-
-from flask import render_template, abort
-import os
-
-from flask import render_template, abort
-import os
-
-from flask import send_file, abort
-import os
 # -------------------- INITIAL SETUP --------------------
 print("[INIT] Starting Flask pipeline service...")
 
@@ -51,12 +37,14 @@ except Exception as e:
 
 # -------------------- FLASK CONFIG --------------------
 app = Flask(__name__)
-app.config['UPLOAD_FOLDER'] = 'Run_Space'
+#app.config['UPLOAD_FOLDER'] = 'Run_Space'
+app.config['UPLOAD_FOLDER'] = os.path.join(os.getcwd(), "Run_Space")
 app.config['TEMPLATES_AUTO_RELOAD'] = True
 
 print(f"[CONFIG] Upload folder set to: {app.config['UPLOAD_FOLDER']}")
 
 tasks = {}
+# map task_id -> threading.Event used to pause/resume background pipeline at approval points
 approval_events = {}
 # Thread-local to keep track of the currently active task for print capture
 current_task = threading.local()
@@ -116,7 +104,7 @@ _task_log_handler = TaskLogHandler()
 logging.getLogger().addHandler(_task_log_handler)
 
 
-def generate_and_register_schema(task_id, schema_context, reasoning=None):
+def generate_and_register_schema(task_id, schema_context):
     """Generate a schema PUML + PNG and register the PNG in the task record.
 
     This creates a timestamped PNG (so previous images are preserved) and
@@ -140,14 +128,12 @@ def generate_and_register_schema(task_id, schema_context, reasoning=None):
     os.makedirs(task_dir, exist_ok=True)
 
     print(f"[SCHEMA] Generating schema image: {png_name} (task {task_id[:8]})")
-    # If reasoning is not passed in, generate it. Otherwise, use the provided reasoning.
-    png_path, generated_reasoning = generate_schema(
+    generate_schema(
         dimensional_model_path=get_path("dimensional_model.json"),
         output_puml_path=get_path(puml_name),
         output_png_path=get_path(png_name),
         schema_context=schema_context,
     )
-    final_reasoning = reasoning if reasoning is not None else generated_reasoning
 
     # Also keep a canonical filename 'relationship_schema.png' for UI preview
     canonical_png = get_path("relationship_schema.png")
@@ -161,21 +147,19 @@ def generate_and_register_schema(task_id, schema_context, reasoning=None):
     ts_url = f"/{app.config['UPLOAD_FOLDER']}/{task_id}/{png_name}"
     canonical_url = f"/{app.config['UPLOAD_FOLDER']}/{task_id}/relationship_schema.png"
     task.setdefault("images", []).append(ts_url)
-    task["schema_image_url"] = canonical_url  # Use canonical URL for UI
-    add_log(task_id, f"✅ Schema image generated: {png_name}", reasoning=final_reasoning)
+    task["schema_image_url"] = canonical_url
+    add_log(task_id, f"✅ Schema image generated: {png_name}")
     return canonical_url
 
 # -------------------- LOGGING UTILITIES --------------------
-def add_log(task_id, text, role="assistant", **kwargs):
+def add_log(task_id, text, role="assistant"):
     print(f"[LOG] ({role}) Task {task_id[:8]}: {text}")
     if task_id in tasks:
-        log_entry = {
+        tasks[task_id]["logs"].append({
             "role": role,
             "text": text,
             "time": datetime.now(timezone.utc).isoformat()
-        }
-        log_entry.update(kwargs)
-        tasks[task_id]["logs"].append(log_entry)
+        })
 
 def set_task_status(task_id, status):
     print(f"[STATUS] Task {task_id[:8]}: {status}")
@@ -242,13 +226,13 @@ def run_correction_loop(task_id, feedback):
             f.write(feedback)
 
         print("[CORRECTION] Running correction()...")
-        reasoning = correction(
+        correction(
             errors_path=get_path("errors.json"),
             puml_path=get_path("relationship_schema.puml"),
             query_path=feedback_path
         )
         add_log(task_id, "✅ Corrections applied based on user feedback.")
-        run_testing_and_review(task_id, context=tasks[task_id]['context'], correction_reasoning=reasoning)
+        run_testing_and_review(task_id, context=tasks[task_id]['context'])
         print("[CORRECTION] Completed successfully.")
 
     except Exception as e:
@@ -286,13 +270,12 @@ def run_processing_pipeline(task_id, source_path, context):
         with open(user_context_path, "w", encoding="utf-8") as f:
             f.write(context)
 
-        reasoning  = generate_dimensional_model(
+        generate_dimensional_model(
             metadata_file=get_path("metadata.json"),
             user_context_file=user_context_path,
             output_json=get_path("dimensional_model.json")
         )
-        print(reasoning)
-        add_log(task_id, "✅ Dimensional model generated successfully.", reasoning=reasoning)
+        add_log(task_id, "✅ Dimensional model generated successfully.")
 
         print("[STEP 3] Moving to testing and review phase...")
         run_testing_and_review(task_id, context)
@@ -310,7 +293,7 @@ def run_processing_pipeline(task_id, source_path, context):
             pass
 
 # -------------------- TESTING AND REVIEW --------------------
-def run_testing_and_review(task_id, context, correction_reasoning=None):
+def run_testing_and_review(task_id, context):
     print(f"[TESTING] Running schema testing and review for Task {task_id[:8]}")
     # attribute prints to this task while running tests
     current_task.task_id = task_id
@@ -323,7 +306,8 @@ def run_testing_and_review(task_id, context, correction_reasoning=None):
     set_task_status(task_id, "Generating visual schema diagram...")
     print("[TESTING] Running generate_schema()...")
     try:
-        img_url = generate_and_register_schema(task_id, context, reasoning=correction_reasoning)
+        img_url = generate_and_register_schema(task_id, context)
+        add_log(task_id, "✅ Schema diagram generated.")
     except Exception as e:
         add_log(task_id, f"❌ Schema generation failed: {e}")
         set_task_status(task_id, f"Error: Schema generation failed: {e}")
@@ -331,38 +315,40 @@ def run_testing_and_review(task_id, context, correction_reasoning=None):
 
     set_task_status(task_id, "Running Phase 1 tests...")
     print("[TESTING] Running run_phase1()...")
-    phase1_ok, reasoning = run_phase1(
+    phase1_ok = run_phase1(
         user_query_path=get_path("refined_User_Query.txt"),
         output_path=get_path("testcases_prompt.json")
     )
     if not phase1_ok:
         set_task_status(task_id, "Error: Phase 1 test generation failed")
         add_log(task_id, "❌ Phase 1 failed — testcases_prompt.json was not created or is invalid. Check model output in logs.")
+        # Do not proceed to Phase 2 if Phase 1 did not produce usable output
         return
-    add_log(task_id, "✅ Phase 1 complete.", reasoning=reasoning)
+    add_log(task_id, "✅ Phase 1 complete.")
 
     set_task_status(task_id, "Running Phase 2 validation...")
     print("[TESTING] Running run_phase2()...")
-    phase2_ok, phase2_reasoning = run_phase2(
+    run_phase2(
         plantuml_code_path=get_path("relationship_schema.puml"),
         testcases_path=get_path("testcases_prompt.json"),
         output_dir=task_dir
     )
-    add_log(task_id, "✅ Phase 2 validation complete.", reasoning=phase2_reasoning)
+    add_log(task_id, "✅ Phase 2 validation complete.")
 
     set_task_status(task_id, "Applying automated corrections...")
     print("[TESTING] Running correction() for auto-fix...")
-    correction_reasoning = correction(
+    correction(
         errors_path=get_path("errors.json"),
         puml_path=get_path("relationship_schema.puml"),
         query_path=get_path("refined_User_Query.txt")
     )
+    add_log(task_id, "✅ Automated corrections applied.")
 
     # After automated corrections, regenerate the schema image so the
     # corrected diagram is available (preserve the previous image too).
     try:
-        # Pass the reasoning from the automated correction to the image generation step
-        generate_and_register_schema(task_id, context, reasoning=correction_reasoning)
+        corrected_img = generate_and_register_schema(task_id, context)
+        add_log(task_id, f"✅ Corrected schema image generated: {corrected_img}")
     except Exception as e:
         add_log(task_id, f"❌ Failed to generate corrected schema image: {e}")
 
@@ -398,11 +384,14 @@ def continue_pipeline(task_id):
         )
         add_log(task_id, "✅ CREATE script generated.")
 
+                # --- PAUSE FOR CREATE APPROVAL ---
         print("[STEP 9] CREATE script generated and ready. Pausing for user approval before execution.")
         add_log(task_id, "CREATE script generated and ready for execution. Awaiting user approval to create tables.", role="assistant")
         # mark awaiting approval in task state (this will be visible to frontend via /status)
         tasks[task_id]['awaiting_approval'] = 'create'
         set_task_status(task_id, "Awaiting approval: create_tables")
+
+        # create/attach an Event object that the approve endpoint will set
         evt = threading.Event()
         approval_events[task_id] = evt
 
@@ -414,12 +403,15 @@ def continue_pipeline(task_id):
         set_task_status(task_id, "Creating tables...")
         print("[STEP 9] User approved. Executing CREATE script now...")
 
-        output_path = "Run_Space" + f"/{task_id}"+"/create_Database_Script.py"  
+        output_path = os.path.join(app.config['UPLOAD_FOLDER'], task_id, "create_Database_Script.py")
+
         with open(output_path,"r", encoding="utf-8") as f:
             python_code = f.read()
+
         # Execute the script, ensuring it runs within its own directory
         result = run_python_code(python_code, run_space_dir=task_dir)
         add_log(task_id, "✅ Tables created.")
+
 
         set_task_status(task_id, "Generating INSERT script...")
         print("[STEP 10] Generating INSERT script...")
@@ -457,6 +449,7 @@ def continue_pipeline(task_id):
             raise Exception(result['stderr'])
         add_log(task_id, "✅ Data inserted.")
 
+
         set_task_status(task_id, "Completed")
         print(f"[COMPLETE] Task {task_id[:8]} finished successfully.")
         add_log(task_id, "🎉 Pipeline completed successfully!")
@@ -488,6 +481,26 @@ def run_space_files(filename):
     print(f"[ROUTE] Serving file from Run_Space: {filename}")
     return send_from_directory(app.config['UPLOAD_FOLDER'], filename)
 
+
+from markupsafe import escape
+
+from flask import send_file, abort
+import os
+
+from flask import render_template, abort
+import os
+
+from flask import render_template, abort
+import os
+
+from flask import send_file, abort
+import os
+
+# Add imports at top if not already present
+from werkzeug.utils import safe_join
+from flask import send_from_directory, abort
+
+# --- Download route ---
 @app.route('/download_raw/<task_id>/<path:filename>')
 def download_raw(task_id, filename):
     """
@@ -522,6 +535,8 @@ def download_raw(task_id, filename):
     except Exception as e:
         app.logger.exception("download_raw: failed to send file")
         abort(500, description=str(e))
+
+
 
 @app.route('/view_script/<task_id>/<which>')
 def view_script(task_id, which):
@@ -587,6 +602,10 @@ def view_script(task_id, which):
         UPLOAD_FOLDER=os.path.basename(upload_folder),
         available_files=available_files
     )
+
+
+
+
 
 @app.route('/start_generation', methods=['POST'])
 def start_generation():
@@ -826,6 +845,7 @@ def start_generation():
 
     # leave request; thread will capture subsequent background prints
     return jsonify({"task_id": task_id})
+
 @app.route('/approve_action/<task_id>', methods=['POST'])
 def approve_action(task_id):
     """

@@ -123,7 +123,7 @@ Return only a Python script that is fully executable as a single file. Do not in
 """
 
     print("⏳ Generating Python script with Gemini...")
-    py_code = api_call(prompt, model=model)
+    py_code = api_call(prompt)
     if("```python" in py_code):
         py_code = py_code.split("```python")[1].split("```")[0]
     out_dir = os.path.dirname(output_file)

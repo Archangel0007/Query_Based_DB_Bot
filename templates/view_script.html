@@ -1,0 +1,68 @@
+{% extends "index.html" %}
+
+{% block title %}View Script - {{ which|capitalize }}{% endblock %}
+
+{% block content %}
+<div class="page-layout" style="padding:24px;">
+  <div style="max-width:1000px; margin:0 auto;">
+    <div style="display:flex; align-items:center; justify-content:space-between; gap:12px; margin-bottom:14px;">
+      <div>
+        <h2 style="margin:0;">{{ filename }}</h2>
+        <div style="color:var(--muted); font-size:13px;">Task: {{ task_id }}</div>
+      </div>
+      <div style="display:flex; gap:8px;">
+        {# build raw_path as "task_id/filename" (NOT including Run_Space) #}
+        <a href="{{ url_for('run_space_files', filename=task_id ~ '/' ~ filename) }}"
+           class="btn"
+           style="text-decoration:none;"
+           target="_blank"
+           rel="noopener">⬇️ Download raw</a>
+
+        <button id="open-in-new" class="btn">Open in editor (new tab)</button>
+      </div>
+    </div>
+
+    {% if not script_exists %}
+      <div class="form-container">
+        <p class="muted">No script found at <code>{{ filename }}</code> for this task.</p>
+
+        {% if available_files %}
+          <div style="margin-top:10px;">
+            <div class="muted" style="margin-bottom:6px;">Available files for this task:</div>
+            <div style="display:flex; gap:8px; flex-wrap:wrap;">
+              {% for f in available_files %}
+                <a class="btn" style="text-decoration:none;" href="{{ url_for('download_raw', task_id=task_id, filename=f) }}" target="_blank" rel="noopener">
+                  ⬇️ {{ f }}
+                </a>
+              {% endfor %}
+            </div>
+          </div>
+        {% endif %}
+      </div>
+    {% else %}
+      <div class="form-container" style="padding:12px;">
+        <div style="display:flex; gap:8px; align-items:center; margin-bottom:8px;">
+          <span class="muted">Preview (read-only)</span>
+          <span style="color:var(--muted); font-size:12px;">• Click the Download button to download the raw file</span>
+        </div>
+
+        <pre id="code-block" style="white-space:pre-wrap; overflow:auto; max-height:70vh; padding:12px; border-radius:8px; background: rgba(0,0,0,0.03); border:1px solid rgba(0,0,0,0.04);">
+{{ script_content | e }}
+        </pre>
+      </div>
+    {% endif %}
+
+    <div style="margin-top:12px;">
+      <a href="{{ url_for('upload') }}" class="btn">Back to upload</a>
+    </div>
+  </div>
+</div>
+
+<script>
+  // "Open in editor (new tab)" - just opens same URL which shows the preview,
+  // user can use browser's "view source" or save-as if they want to edit locally.
+  document.getElementById('open-in-new')?.addEventListener('click', function () {
+      window.open(window.location.href, '_blank', 'noopener');
+  });
+</script>
+{% endblock %}

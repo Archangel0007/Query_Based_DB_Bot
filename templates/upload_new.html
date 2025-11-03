@@ -1,3 +1,5 @@
+check my upload.html
+
 {% extends "index.html" %}
 
 {% block title %}Data Upload - Schema Builder{% endblock %}
@@ -421,14 +423,6 @@
         async function pollStatus() {
             if (!taskId) return;
 
-            // Before clearing the UI, record which reasoning panels are currently open.
-            const openReasoningIds = new Set();
-            document.querySelectorAll('.reasoning-panel').forEach(panel => {
-                if (panel.style.display === 'block') {
-                    openReasoningIds.add(panel.id);
-                }
-            });
-
             const response = await fetch(`/status/${taskId}`);
             const data = await response.json();
 
@@ -443,51 +437,11 @@
 
             // Update chat logs
             chatContainer.innerHTML = ''; // Clear previous logs
-            data.logs.forEach((msg, index) => {
+            data.logs.forEach(msg => {
                 const msgDiv = document.createElement('div');
                 msgDiv.className = `chat-msg ${msg.role}`;
-                
-                let contentHTML = `<b>${msg.role === 'user' ? 'You' : 'Assistant'}</b><br>${msg.text.replace(/\n/g, '<br>')}`;
-
-                // Check if there is reasoning data to display
-                if (msg.reasoning && msg.reasoning.length > 0) {
-                    const reasoningId = `reasoning-${index}`; // Use a stable ID based on message index
-                    const isOpen = openReasoningIds.has(reasoningId);
-                    const buttonText = isOpen ? 'Hide reasoning' : 'Show reasoning';
-                    const panelStyle = isOpen ? 'display:block;' : 'display:none;';
-
-                    contentHTML += ` <button class="reasoning-toggle-btn" data-target="${reasoningId}">${buttonText}</button>`;
-
-                    let reasoningHTML = '';
-                    // Check if reasoning is in the new structured format (array of objects with step/details)
-                    if (Array.isArray(msg.reasoning) && msg.reasoning.length > 0 && msg.reasoning[0].step && msg.reasoning[0].details) {
-                        reasoningHTML = msg.reasoning.map(item => `
-                            <div class="reasoning-item">
-                                <div class="reasoning-step">${item.step}</div>
-                                <p class="reasoning-details">${item.details}</p>
-                            </div>
-                        `).join('');
-                    } else {
-                        // Fallback for other JSON structures
-                        reasoningHTML = `<pre>${JSON.stringify(msg.reasoning, null, 2)}</pre>`;
-                    }
-
-                    contentHTML += `<div id="${reasoningId}" class="reasoning-panel" style="${panelStyle}">${reasoningHTML}</div>`;
-                }
-
-                msgDiv.innerHTML = contentHTML;
+                msgDiv.innerHTML = `<b>${msg.role === 'user' ? 'You' : 'Assistant'}</b><br>${msg.text.replace(/\n/g, '<br>')}`;
                 chatContainer.appendChild(msgDiv);
-            });
-
-            // Add event listeners to the new buttons
-            document.querySelectorAll('.reasoning-toggle-btn').forEach(btn => {
-                btn.addEventListener('click', () => {
-                    const targetId = btn.getAttribute('data-target');
-                    const panel = document.getElementById(targetId);
-                    const isVisible = panel.style.display === 'block';
-                    panel.style.display = isVisible ? 'none' : 'block';
-                    btn.textContent = isVisible ? 'Show reasoning' : 'Hide reasoning';
-                });
             });
             chatContainer.scrollTop = chatContainer.scrollHeight;
 
