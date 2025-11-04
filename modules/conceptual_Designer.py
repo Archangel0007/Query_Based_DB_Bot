@@ -30,58 +30,74 @@ def load_text_file(path):
         return f.read()
 
 def build_prompt(metadata, user_context):
-    """Builds a structured Gemini prompt for dimensional modeling."""
-    system_instructions = (
-        """You are an expert DataBase architect. Your task is to design a dimensional model based on table metadata from a transactional system.
+    """
+    Builds a GPT-4o-optimized prompt for creating a 3NF conceptual model
+    and classifying Fact and Dimension tables from transactional metadata.
+    """
 
-        1.  **Analyze the Tables**: Review the provided table metadata.
-        2.  **Normalize to 3NF**: Conceptually normalize the tables to Third Normal Form (3NF) to identify discrete entities.
-        3.  **Identify Fact and Dimension Tables**: Based on the 3NF structure and user context, determine which tables should be facts (containing quantitative measures of business events) and which should be dimensions (containing descriptive attributes).
-        4.  **Define the Schema**: Propose a new schema. You may need to create new tables (e.g., for date dimensions) or split existing ones. The number of tables you are creating should be either greater than or equal to, but not less than, the number of source files.
-        5.  **Output JSON**: Return ONLY a single JSON object that describes the dimensional model. Do not include any other text, explanations, or markdown.
-        6.  **Column Data Types**: Use standard SQL data types (e.g., INTEGER, VARCHAR, DECIMAL, TIMESTAMP) for column definitions.
-        7.  **No New Columns**: Do Not create New columns for the tables. Neither Fact nor Dimension tables should have any columns that are not present in the source metadata.
-        8.  **Do Not Skip out any columns**: You are to retain all the columns as presented in the original metadata. Skipping out on any of them means data Loss which is STRICTLY not allowed.
-        9.  **Reasoning**: Give you reasoning in plain natural language in points. One point for each tables you are creating.
-        The JSON output must follow this structure:
-        {
+    system_instructions = (
+        """You are a senior database architect specializing in data warehousing and normalization.
+Your task is to design a **3NF conceptual model** from provided source metadata,
+and classify each resulting entity as either a **Fact** or **Dimension** table.
+
+--- OBJECTIVE ---
+You will:
+1. Analyze the provided table metadata.
+2. Normalize the structure conceptually to **Third Normal Form (3NF)**:
+   - Eliminate partial and transitive dependencies.
+   - Ensure each non-key column depends only on the key.
+3. Classify each resulting entity as a **Fact** or **Dimension**:
+   - Fact tables: contain measurable events, quantitative metrics, or transactional data.
+   - Dimension tables: contain descriptive attributes, categories, or hierarchies.
+4. Preserve **all columns from the input metadata**.
+   - Do NOT add or remove columns.
+   - You may move columns between tables to achieve 3NF, but every column must appear exactly once.
+5. Use **standard SQL data types** (INTEGER, VARCHAR, DECIMAL, TIMESTAMP, etc.).
+6. The number of resulting tables must be **greater than or equal to** the number of source files present in metadata.
+7. Dimensional tables are allowed to have single Column.
+8. Create as many tables as you can within Reason. It is IMPORTANT to follow 3NF strictly. Give good weight to the user context while designing the model.
+9. Provide clear **reasoning**, describing normalization and classification decisions per table.
+
+--- OUTPUT FORMAT ---
+Return ONLY one valid JSON object with the structure below.
+Do NOT include markdown, explanations, or any text outside the JSON.
+
+{
   "reasoning": [
     {
-        [
-  {
-    "step": "Analyze the Tables",
-    "details": "The provided metadata consists of a single table 'orders' that includes information about orders, customers, products, and shipping details."
-  },
+      "step": "table name and type",
+      "details": "Explain how this table was derived or normalized, and why it is Fact or Dimension."
+    }
   ],
   "conceptual_data": {
     "tables": [
       {
         "table_name": "string",
         "table_type": "Fact | Dimension",
-        "description": "A brief description of the table's purpose.",
+        "description": "A short summary of the table purpose.",
         "columns": [
           {
             "column_name": "string",
-            "data_type": "string (e.g., INTEGER, VARCHAR, DECIMAL, TIMESTAMP)"
+            "data_type": "string"
           }
         ]
       }
     ]
   }
 }
-
-        """
+"""
     )
 
     user_payload = (
-        "Here is the metadata from the source system:\n"
+        "Here is the source metadata to analyze:\n"
         + json.dumps(metadata, indent=2)
-        + "\n\nHere is the user's business context for the data:\n"
+        + "\n\nBusiness context to guide modeling decisions:\n"
         + user_context
-        + "\n\nPlease generate the dimensional model in the specified JSON format."
+        + "\n\nPlease generate the dimensional model strictly following the JSON structure above."
     )
 
     return system_instructions + "\n\n" + user_payload
+
 
 def generate_dimensional_model(metadata_file=None, user_context_file=None, output_json=None):
     """Main function to generate and save the dimensional model."""

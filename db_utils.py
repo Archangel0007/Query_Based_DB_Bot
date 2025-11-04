@@ -18,7 +18,7 @@ def get_db_connection():
     """
     Establishes and returns a database connection.
     """
-    load_dotenv(dotenv_path='../.env')  # Load the environment variables from the .env file
+    load_dotenv(dotenv_path='.env')  # Load the environment variables from the .env file
     
     # Log the values to check if they are loaded
     print("DB_HOST:", os.getenv("DB_HOST"))

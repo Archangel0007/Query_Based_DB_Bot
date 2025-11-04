@@ -13,18 +13,10 @@ import builtins
 from werkzeug.utils import safe_join
 from flask import send_from_directory, abort
 from markupsafe import escape
-
 from flask import send_file, abort
-import os
-
 from flask import render_template, abort
-import os
-
 from flask import render_template, abort
-import os
-
 from flask import send_file, abort
-import os
 # -------------------- INITIAL SETUP --------------------
 print("[INIT] Starting Flask pipeline service...")
 
@@ -34,10 +26,11 @@ print(f"[INIT] Project root: {project_root}")
 
 # -------------------- MODULE IMPORTS --------------------
 try:
+    from modules.query_Cleaner import clean_text, save_to_txt
     from modules.conversions import process_uploaded_files, convert_html_to_csv
     from modules.metadata import generate_metadata, get_csv_files_from_directory
     from modules.conceptual_Designer import generate_dimensional_model
-    from modules.schema_Generator import generate_schema
+    from modules.schema_Generator import generate_schema, schema_correction
     from modules.schema_Testing import run_phase1, run_phase2
     from modules.schema_Correction import correction
     from modules.sql_Create_Generator import generate_create_script
@@ -115,7 +108,6 @@ class TaskLogHandler(logging.Handler):
 _task_log_handler = TaskLogHandler()
 logging.getLogger().addHandler(_task_log_handler)
 
-
 def generate_and_register_schema(task_id, schema_context, reasoning=None):
     """Generate a schema PUML + PNG and register the PNG in the task record.
 
@@ -182,7 +174,6 @@ def set_task_status(task_id, status):
     if task_id in tasks:
         tasks[task_id]["status"] = status
 
-
 def create_task_dir(task_id):
     """Create task directory under UPLOAD_FOLDER and copy db_utils.py into it if present."""
     base = app.config['UPLOAD_FOLDER']
@@ -241,14 +232,15 @@ def run_correction_loop(task_id, feedback):
         with open(feedback_path, "w", encoding="utf-8") as f:
             f.write(feedback)
 
-        print("[CORRECTION] Running correction()...")
-        reasoning = correction(
-            errors_path=get_path("errors.json"),
+        print("[CORRECTION] Running schema_correction() based on user feedback...")
+        # Use schema_correction for direct user feedback, not the automated one.
+        schema_correction(
+            user_input=feedback,
             puml_path=get_path("relationship_schema.puml"),
-            query_path=feedback_path
+            png_path=get_path("relationship_schema.png")
         )
-        add_log(task_id, "✅ Corrections applied based on user feedback.")
-        run_testing_and_review(task_id, context=tasks[task_id]['context'], correction_reasoning=reasoning)
+        add_log(task_id, "✅ Corrections applied based on user feedback. Re-running tests...")
+        run_testing_and_review(task_id, context=tasks[task_id]['context'])
         print("[CORRECTION] Completed successfully.")
 
     except Exception as e:
@@ -599,6 +591,8 @@ def start_generation():
     data_medium = request.form.get('data_medium')
     files = request.files.getlist('csv_files')
     context = request.form['schema_context']
+    cleaned_context = clean_text(context)
+    print(f"[CONTEXT] Received schema context ({len(context)} chars).")
     base = app.config['UPLOAD_FOLDER']
     os.makedirs(base, exist_ok=True)
     task_dir = create_task_dir(task_id)
@@ -821,7 +815,7 @@ def start_generation():
 
     add_log(task_id, f"User Context: {context}", role="user")
     print(f"[THREAD] Launching background thread for task {task_id[:8]}...")
-    thread = threading.Thread(target=run_processing_pipeline, args=(task_id, source_path, context))
+    thread = threading.Thread(target=run_processing_pipeline, args=(task_id, source_path, cleaned_context))
     thread.start()
 
     # leave request; thread will capture subsequent background prints

@@ -32,35 +32,48 @@ def load_dimensional_model(path):
         return json.load(f)
 
 def build_prompt(dimensional_model, schema_context):
-    """Builds a structured Gemini prompt from the dimensional model."""
-    system_instructions = (
-        """You are a precise data architect assistant. 
-        Given a suggested Model/ Table information in the form of JSON,from the user provided external context and metadata of the orginal data , infer the relationships (primary keys and foreign keys) between them.  
-        Follow strict PlantUML ER syntax with @startuml ... @enduml. Mark cardinalities (1--N, N--N, 1--1) clearly.
-        Reasoning: Give you reasoning in plain natural language in points. One point for each tables you are creating.
-        Your output MUST be a single JSON object with the following structure. Do not include any other text, explanations, or markdown.
-        
-        The JSON output must follow this structure:
-        {
-  "reasoning": [
-    {
-      "step": "Relation built between the tables",
-      "details": "Why the relations was chosen. what all choices were made to reach the decision like PRimary Keys and Foreign keys"
-    }
-  ],
-  "plantuml_code": "string"
-}
+    """
+    Builds a GPT-4o-optimized prompt for generating a 3NF database schema 
+    and PlantUML ER diagram from a dimensional model and contextual metadata.
+    """
 
+    system_instructions = (
+        """You are a senior data architect AI.
+Your goal is to analyze a user-provided JSON model and contextual metadata,
+then infer normalized (3NF) relational structures and their relationships.
+
+Output Requirements:
+1. You must output a single JSON object — no markdown, no text outside the JSON.
+2. Inside the JSON, include:
+   - "reasoning": a list of step-by-step explanations (one per table) justifying
+     primary keys, foreign keys, and relationship cardinalities.
+   - "plantuml_code": a string containing a valid PlantUML ER diagram.
+3. The PlantUML code must:
+   - Start with `@startuml` and end with `@enduml`
+   - Use standard ER notation.
+   - Label primary keys as <<PK>> and foreign keys as <<FK>>.
+   - Explicitly show cardinalities (1--N, 1--1, N--N).
+4. Follow 3NF design principles — avoid redundancy and ensure dependency preservation.
+
+Important:
+- Do not include any explanation or markdown outside the JSON.
+- The JSON must be syntactically valid.
 """
     )
 
-    context_instructions = f"\n\nUse this additional context provided by the user to guide your schema design:\n---USER CONTEXT---\n{schema_context}\n---END USER CONTEXT---"
+    context_instructions = f"""
+Use this external context and metadata to guide normalization and relationship inference:
+---USER CONTEXT---
+{schema_context}
+---END USER CONTEXT---
+"""
 
     user_payload = (
-        "Here is the JSON for the suggested table:\n"
+        "Here is the user-provided JSON for the suggested model:\n"
         + json.dumps(dimensional_model, indent=2)
+        + "\n\n"
         + context_instructions
-        + "\n\n Output only the PlantUML ER diagram code based on the metadata and the provided context."
+        + "\nNow, infer relationships, keys, and design the ER diagram according to the rules above."
     )
 
     return system_instructions + "\n\n" + user_payload
@@ -208,6 +221,40 @@ def generate_schema(dimensional_model_path, output_puml_path, output_png_path, s
         save_plantuml(result_text, out_path=output_puml_path + ".error.puml")
         raise
 
+def build_correction_prompt(current_schema: str, correction_text: str) -> str:
+    """
+    Builds a GPT-4o-optimized prompt to correct or update an existing PlantUML ER diagram.
+    The model must apply only the requested corrections and return the full corrected code.
+    """
+
+    system_instructions = (
+        """You are an expert data modeler and PlantUML ERD specialist. Your task is to update an existing PlantUML ER diagram based on a user's correction request.
+
+--- OUTPUT REQUIREMENTS ---
+- Return ONLY the corrected PlantUML code.
+- The code must:
+  - Begin with '@startuml' and end with '@enduml'
+  - Preserve all valid existing entities, relationships, and formatting.
+  - Apply ONLY the requested corrections; do not invent unrelated changes.
+  - Maintain valid syntax and consistent indentation.
+- Do NOT include explanations, markdown, reasoning, or commentary outside the code.
+- No matter what the correction request should be ALWAYS fulfilled in the output.
+"""
+    )
+
+    user_payload = f"""
+--- EXISTING PLANTUML SCHEMA ---
+{current_schema}
+
+--- USER CORRECTION REQUEST ---
+{correction_text}
+
+Now apply the correction and return only the fully updated PlantUML diagram.
+"""
+
+    prompt = system_instructions + "\n\n" + user_payload
+    return prompt
+
 def schema_correction(user_input, puml_path, png_path):
     """Apply corrections to the current schema based on user input."""
     if not os.path.exists(puml_path):
@@ -231,25 +278,8 @@ def schema_correction(user_input, puml_path, png_path):
         with open(puml_path, "r", encoding="utf-8") as f:
             current_schema = f.read()
 
-        system_instructions = (
-            """You are a precise data modeling assistant.
-            You are given an existing PlantUML ER diagram.
-            Apply the user's correction request carefully and output ONLY the corrected PlantUML code.
-            Preserve valid syntax and @startuml ... @enduml structure.
-            Do not add explanations or text outside of the UML code."""
-        )
-
-        user_payload = f"""
-        Existing Schema:
-        {current_schema}
-
-        User correction request:
-        {correction_text}
-
-        Please modify the schema accordingly and return the updated PlantUML diagram.
-        """
-
-        prompt = system_instructions + "\n\n" + user_payload
+        prompt = build_correction_prompt(current_schema, correction_text)
+        logger.info("🤖 Calling Gemini model for schema correction...")
 
         corrected_text = api_call(prompt)
         save_plantuml(corrected_text, out_path=puml_path)

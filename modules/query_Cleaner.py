@@ -2,7 +2,8 @@ import re
 import os
 from spellchecker import SpellChecker
 import google.generativeai as genai
-from gemini_Call import api_call
+from .gemini_Call import api_call
+
 
 spell = SpellChecker()
 
@@ -11,15 +12,10 @@ def clean_text(cleaned_query: str) -> str:
     prompt = f"""
 You are a highly experienced data engineer and database expert.
 Treat the following user query as a precise description of database/data-related requirements. 
-Do NOT hallucinate any additional information or invent extra assumptions. 
 Your output should strictly reflect what is implied by the query.
 
-Tasks:
-1. Identify potential data sources (e.g., tables, CSVs, logs) that would satisfy the query.
-2. Identify the data cleaning, merging, and transformation steps needed.
-3. Describe how this data can be structured and incorporated into a robust data pipeline.
-4. Provide suggestions for analysis or applications relevant to the query.
-
+Task:
+Provide me with a cleaned, well-structured, and technically precise version of the user query below along with a list of tables required for this database task.
 Guidelines:
 - Assume the user is non-technical. Interpret ambiguous wording carefully, but do not invent missing data.
 - Keep your explanations concise, structured, and technical, focusing on the database/data engineering perspective.
@@ -28,9 +24,8 @@ Guidelines:
 User Query (cleaned):
 \"{cleaned_query}\"
 """
-    response = api_call(prompt, model="gemini-2.5-pro")
+    response = api_call(prompt)
     # Do not assume a default path here; caller should call save_to_txt explicitly with the task path.
-    return response.strip()
     return response.strip()
 
 def save_to_txt(content: str, filename: str):

@@ -5,6 +5,71 @@ from dotenv import load_dotenv
 from .gemini_Call import api_call
 import json
 
+def build_prompt_phase_1(user_query: str) -> str:
+    """
+    Builds a GPT-4o-optimized prompt for generating QA test cases
+    to validate a relational database schema based on a user query.
+    """
+
+    json_structure_example = """
+{
+  "reasoning": [
+    {
+      "step": "High-level explanation of the testing approach",
+      "details": "Why these test cases comprehensively validate the schema."
+    }
+  ],
+  "Test Cases": [
+    {
+      "serial_number": 1,
+      "testcase_description": "Description of the test objective.",
+      "reasoning": "Why this specific test is important.",
+      "category": "PrimaryKey | ForeignKey | DataType | Relationship | NullConstraint | Index | UniqueConstraint",
+      "severity": "Critical | High | Medium | Low",
+      "expected_result": "Optional expected outcome if applicable."
+    }
+  ]
+}
+"""
+
+    prompt_phase1 = f"""
+You are a senior **Database QA Architect**.
+Your task is to design **10 detailed QA test cases** that validate a relational database schema
+derived from the following user query:
+
+--- USER QUERY ---
+{user_query}
+--- END QUERY ---
+
+--- OBJECTIVE ---
+Generate schema validation test cases that check logical correctness,
+referential integrity, data type consistency, and normalization adherence.
+
+--- GUIDELINES ---
+1. Each test must be unique and cover a distinct potential schema issue.
+2. Include both common and edge cases, such as:
+   - Self-referencing tables
+   - Mismatched PK–FK data types
+   - Nullability or constraint violations
+   - Many-to-many relationships
+   - Orphaned records or missing FKs
+   - Redundant attributes violating 3NF
+3. Distribute test cases across categories:
+   PrimaryKey, ForeignKey, DataType, Relationship, NullConstraint, Index, UniqueConstraint.
+4. For each test case:
+   - Provide a concise but precise `testcase_description`.
+   - Include a clear `reasoning` explaining why this test matters.
+   - Assign an appropriate `category` and `severity`.
+   - Add an optional `expected_result` if relevant.
+
+--- OUTPUT FORMAT ---
+Return ONE valid JSON object **only** (no markdown, no extra text).
+It must strictly follow this structure:
+{json_structure_example}
+"""
+
+    return prompt_phase1.strip()
+
 def run_phase1(user_query_path, output_path):
     """Generate Phase 1 testcases from a user query and write to output_path.
 
@@ -15,51 +80,8 @@ def run_phase1(user_query_path, output_path):
     with open(user_query_path, "r", encoding="utf-8") as f:
         user_query = f.read().strip()
 
-    # Define the JSON structure outside the f-string to avoid formatting errors
-    json_structure_example = """
-{
-  "reasoning": [
-    {
-      "step": "Test case description",
-      "details": "Why the testcase was chosen and what it tests for."
-    }
-  ],
-  "Test Cases": [
-      {
-          "serial_number": 1,
-          "testcase_description": "...",
-          "reasoning": "...",
-          "category": "...",
-          "severity": "..."
-      }
-  ]
-}
-"""
-
-    prompt_phase1 = f"""
-You are a senior database QA expert and test-case strategist.
-Input:
-1) USER QUERY: {user_query}
-Task:
-- Generate 25-30 possible QA testcases that would validate a relational database schema based on the query.
-- Each testcase should be a JSON object with:
-  - serial_number: integer (unique)
-  - testcase_description: string (what to test)
-  - reasoning: string (why this test is important)
-  - optional: expected_result (if applicable)
-  - optional: category (PrimaryKey, ForeignKey, DataType, Relationship, NullConstraint, Index, UniqueConstraint)
-  - optional: severity (Critical, High, Medium, Low)
-Guidance for producing the BEST testcases:
-1.  Think beyond the literal query: Anticipate all possible database schema issues related to the query.
-2.  Edge case focus: Include unusual or tricky scenarios such as self-referencing tables, nullable vs non-nullable inconsistencies, data type mismatches between primary and foreign keys, multi-column foreign keys, many-to-many relationship issues, orphaned records, invalid defaults.
-3.  Coverage across categories: ensure PrimaryKey, ForeignKey, DataType, Relationship, NullConstraint, Index, UniqueConstraint are considered where relevant.
-4.  Reasoning clarity: Provide reasoning for each testcase.
-5.  No repetition: Make every testcase unique.
-Output format STRICT: Return ONLY a single JSON object. Do not include any other text, explanations, or markdown.
-The JSON output must follow this structure:
-{json_structure_example}
-"""
-
+    prompt_phase1 = build_prompt_phase_1(user_query)
+    print("\n⚙️ Running Phase 1 — generating testcases...")
     output_text = api_call(prompt_phase1)
     clean_output = re.sub(r"```json|```", "", output_text, flags=re.DOTALL).strip()
 
@@ -93,31 +115,61 @@ def run_phase2(plantuml_code_path, testcases_path, output_dir):
         testcases_prompt = f.read()
 
     json_structure_example = """
-{
-  "reasoning": [
-    {
-      "step": "Validation Summary",
-      "details": "A brief summary of the validation process, including the number of tests passed and failed."
-    }
-  ],
-  "testcases": [ {"serial_number": 1, "status": "pass/fail", "notes": "..."} ],
-  "errors": [ {"testcase_serial_number": 2, "error_description": "..."} ]
-}
-"""
+        {
+        "reasoning": [
+            {
+            "step": "Validation Summary",
+            "details": "A brief summary of the validation process, including the number of tests passed and failed."
+            }
+        ],
+        "testcases": [
+            {
+            "serial_number": 1,
+            "status": "pass/fail",
+            "notes": "..."
+            }
+        ],
+        "errors": [
+            {
+            "testcase_serial_number": 2,
+            "error_description": "..."
+            }
+        ]
+        }
+        """
+
     prompt_phase2 = f"""
-    You are a database QA expert.
+        SYSTEM INSTRUCTIONS:
+        You are a highly accurate and detail-oriented **Database QA Expert**.
+        Your job is to validate a database schema (in 3NF) against a set of test cases.
 
-    Inputs:
-    1) PLANTUML CODE (ER diagram): {plantuml_code}
-    2) Testcases to run: {testcases_prompt}
+        BEHAVIOR RULES:
+        - Respond ONLY with valid JSON.
+        - Do NOT include markdown, commentary, natural language text, or explanations outside of the JSON.
+        - Follow the output schema exactly as shown.
+        - Use concise but clear phrasing in all fields.
+        - Ensure the JSON is syntactically valid (no trailing commas, no comments).
 
-    Task:
-    - Execute the testcases on the schema.
-    - Provide reasoning for the validation process, summarizing the findings.
-    Output format STRICT: Return ONLY a single JSON object. Do not include any other text, explanations, or markdown.
-    The JSON output must follow this structure:
-    {json_structure_example}
-    """
+        INPUTS:
+        1. ER Diagram (PlantUML Code):
+        {plantuml_code}
+
+        2. Test Cases to Execute:
+        {testcases_prompt}
+
+        TASK:
+        1. Evaluate the given schema using the provided test cases.
+        2. Summarize your validation reasoning under the "reasoning" key.
+        3. For each test case, mark whether it **passes** or **fails**, with a short note explaining why.
+        4. If a test case fails, include a corresponding entry in the "errors" list with a clear error description.
+        5. Ensure all output fits the following JSON structure exactly:
+
+        {json_structure_example}
+
+        FINAL REQUIREMENT:
+        Return ONLY the JSON object — no markdown, preamble, or commentary.
+        """
+
 
     output_text = api_call(prompt_phase2)
     clean_output = re.sub(r"```json|```", "", output_text, flags=re.DOTALL).strip()

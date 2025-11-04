@@ -29,51 +29,61 @@ def normalize_errors(errors_raw: Any) -> List[Dict[str, Any]]:
 
     raise ValueError("Unsupported errors.json format — expected JSON list or object.")
 
-def build_prompt(errors: List[Dict[str, Any]], puml: str, query_text: str) -> str:
+def build_prompt(errors: list[dict[str, any]], puml: str, query_text: str) -> str:
     """
-    Construct a strong, unambiguous prompt for the LLM to correct the PlantUML.
-    The goal: produce ONLY the corrected PlantUML content with no explanation.
+    Build a GPT-4o-optimized prompt to correct PlantUML ERD code.
+    The model must fix only the described issues and return one valid JSON object.
     """
+
     json_structure_example = """
 {
   "reasoning": [
     {
-      "step": "Description of a correction made",
-      "details": "Detailed explanation of why this change was necessary to fix an error."
+      "step": "Describe the correction made",
+      "details": "Explain briefly why the change was required to resolve the error."
     }
   ],
-  "plantuml_code": "string containing the full corrected PlantU-ML code"
+  "plantuml_code": "Full corrected PlantUML ER diagram code as a single string"
 }
 """
+
     errors_summary = json.dumps(errors, indent=2, ensure_ascii=False)
+
     prompt = textwrap.dedent(f"""
-    You are an expert at translating requirement specifications and error reports into
-    corrected PlantUML (.puml) code. You will be given:
-      1) Requirement text (query.txt) describing the domain and intended data model.
-      2) The original PlantUML source (data.puml).
-      3) A list of detected errors (errors.json) that must be corrected.
-    TASK:
-    - Fix ONLY the issues explicitly described in the errors list, and make conservative
-      improvements to ensure correctness of types and FK relationships described there.
-    - Preserve entity/relationship names where possible. Do not invent new entities unless
-      required to fix referential integrity or naming conflicts.
-    - Output ONLY a single JSON object. No commentary, no other text.
-    The JSON output must follow this structure:
+    You are a senior data architect and PlantUML ERD specialist.
+    Your task is to correct a PlantUML data model based on the provided
+    requirements and error report. This current PlantUML diagram has been made for a 3NF normalized relational database schema. Maintain this normalization level and make only the necessary corrections.
+
+    --- OBJECTIVE ---
+    1. Review the original PlantUML diagram, the requirement description, and the error list.
+    2. Apply only the corrections explicitly mentioned in the errors list.
+       - Fix incorrect relationships, data types, missing keys, or referential integrity problems.
+       - Preserve entity and attribute names whenever possible.
+       - Do not introduce new entities or fields unless necessary for referential integrity.
+    3. Ensure the corrected diagram is logically consistent and syntactically valid PlantUML code.
+    4. Return ONLY a single JSON object that exactly follows the format below.
+       - No markdown, no explanations, no extra text.
+
+    --- REQUIRED JSON FORMAT ---
     {json_structure_example}
 
-    INPUT - Requirement Context (query.txt):
+    --- INPUT DATA ---
+
+    Requirement Context (query.txt)
     -------------------------
     {query_text}
 
-    INPUT - Original PlantUML (data.puml):
+    Original PlantUML (data.puml)
     -------------------------
     {puml}
 
-    INPUT - Detected Errors (errors.json):
+    Detected Errors (errors.json)
     -------------------------
     {errors_summary}
 
+    Please produce the corrected output JSON now.
     """).strip()
+
     return prompt
 
 def save_output(text: str, path: str) -> None:
