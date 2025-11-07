@@ -2,7 +2,7 @@ import re
 import os
 from spellchecker import SpellChecker
 import google.generativeai as genai
-from .gemini_Call import api_call
+from .api_Call import api_call
 
 
 spell = SpellChecker()

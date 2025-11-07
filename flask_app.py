@@ -10,6 +10,7 @@ import json
 import json
 import logging
 import builtins
+import traceback
 from werkzeug.utils import safe_join
 from flask import send_from_directory, abort
 from markupsafe import escape
@@ -35,6 +36,8 @@ try:
     from modules.schema_Correction import correction
     from modules.sql_Create_Generator import generate_create_script
     from modules.sql_Insert_Generator import generate_insert_script
+    from modules.sql_Create_Writer import generate_create_sql_writer_script
+    from modules.execute_sql_script import execute_sql_from_file
     from modules.script_Runner import run_python_code
     from modules.data_Fetch import fetch_from_dynamodb, fetch_from_s3, fetch_from_cosmosdb
     print("[INIT] All module imports successful.")
@@ -258,6 +261,7 @@ def run_correction_loop(task_id, feedback):
 # -------------------- MAIN PIPELINE --------------------
 def run_processing_pipeline(task_id, source_path, context):
     print(f"[PIPELINE] Starting processing pipeline for Task {task_id[:8]}")
+    context = clean_text(context)
     # ensure prints inside this background thread are attributed to this task
     current_task.task_id = task_id
     base_run_space = app.config['UPLOAD_FOLDER']
@@ -323,7 +327,7 @@ def run_testing_and_review(task_id, context, correction_reasoning=None):
 
     set_task_status(task_id, "Running Phase 1 tests...")
     print("[TESTING] Running run_phase1()...")
-    phase1_ok, reasoning = run_phase1(
+    phase1_ok, phase_1_reasoning = run_phase1(
         user_query_path=get_path("refined_User_Query.txt"),
         output_path=get_path("testcases_prompt.json")
     )
@@ -331,7 +335,7 @@ def run_testing_and_review(task_id, context, correction_reasoning=None):
         set_task_status(task_id, "Error: Phase 1 test generation failed")
         add_log(task_id, "❌ Phase 1 failed — testcases_prompt.json was not created or is invalid. Check model output in logs.")
         return
-    add_log(task_id, "✅ Phase 1 complete.", reasoning=reasoning)
+    add_log(task_id, "✅ Phase 1 complete.", reasoning=phase_1_reasoning)
 
     set_task_status(task_id, "Running Phase 2 validation...")
     print("[TESTING] Running run_phase2()...")
@@ -340,6 +344,10 @@ def run_testing_and_review(task_id, context, correction_reasoning=None):
         testcases_path=get_path("testcases_prompt.json"),
         output_dir=task_dir
     )
+    if not phase2_ok:
+        set_task_status(task_id, "Error: Phase 2 test generation failed")
+        add_log(task_id, "❌ Phase 2 failed — testcases_prompt.json running was at fault or is invalid. Check model output in logs.")
+        return
     add_log(task_id, "✅ Phase 2 validation complete.", reasoning=phase2_reasoning)
 
     set_task_status(task_id, "Applying automated corrections...")
@@ -374,8 +382,7 @@ def continue_pipeline(task_id):
     print(f"[CONTINUE] Continuing pipeline for Task {task_id[:8]}")
     # attribute prints in this thread to the task
     current_task.task_id = task_id
-    base_run_space = app.config['UPLOAD_FOLDER']
-    task_dir = os.path.join(base_run_space, task_id)
+    task_dir = "Run_Space" + f"/{task_id}/"
 
     def get_path(filename):
         return os.path.join(task_dir, filename)
@@ -383,14 +390,20 @@ def continue_pipeline(task_id):
     try:
         set_task_status(task_id, "Generating CREATE script...")
         print("[STEP 8] Generating CREATE script...")
-        generate_create_script(
+        generate_create_sql_writer_script(
             metadata_file=get_path("metadata.json"),
             plantuml_file=get_path("relationship_schema.puml"),
             output_file=get_path("create_Database_Script.py")
         )
+
         add_log(task_id, "✅ CREATE script generated.")
 
-        print("[STEP 9] CREATE script generated and ready. Pausing for user approval before execution.")
+        output_path = "Run_Space" + f"/{task_id}" + "/create_Database_Script.py"
+        with open(output_path, "r", encoding="utf-8") as f:
+            python_code = f.read()
+
+        # Execute the script (it should write create_schema.sql in the same run space)
+        result = run_python_code(python_code, run_space_dir=task_dir)
         add_log(task_id, "CREATE script generated and ready for execution. Awaiting user approval to create tables.", role="assistant")
         # mark awaiting approval in task state (this will be visible to frontend via /status)
         tasks[task_id]['awaiting_approval'] = 'create'
@@ -406,12 +419,77 @@ def continue_pipeline(task_id):
         set_task_status(task_id, "Creating tables...")
         print("[STEP 9] User approved. Executing CREATE script now...")
 
-        output_path = "Run_Space" + f"/{task_id}"+"/create_Database_Script.py"  
-        with open(output_path,"r", encoding="utf-8") as f:
-            python_code = f.read()
-        # Execute the script, ensuring it runs within its own directory
-        result = run_python_code(python_code, run_space_dir=task_dir)
-        add_log(task_id, "✅ Tables created.")
+        # Now execute SQL immediately (no approval step)
+        try:
+            set_task_status(task_id, "Creating tables...")
+            print("[STEP 9] Executing CREATE script now...")
+
+            # Construct the expected path for the generated SQL file
+            sql_path = os.path.join("Run_Space", task_id, "create_schema.sql")
+            print(f"[EXEC] sql_path = {sql_path}, exists = {os.path.exists(sql_path)}")
+
+            if not os.path.exists(sql_path):
+                add_log(task_id, f"❌ SQL file not found: {sql_path}")
+                set_task_status(task_id, "Failed: create_tables")
+            else:
+                try:
+                    execute_sql_from_file(sql_path)
+                    add_log(task_id, "✅ Tables created.")
+                    set_task_status(task_id, "Completed: create_tables")
+                except Exception as e_exec:
+                    add_log(task_id, f"❌ Error executing SQL: {e_exec}")
+                    add_log(task_id, traceback.format_exc())
+                    set_task_status(task_id, "Failed: create_tables")
+        except Exception as e:
+            # Catch any unexpected exception in the flow
+            add_log(task_id, f"❌ Unexpected error in create flow: {e}")
+            add_log(task_id, traceback.format_exc())
+            set_task_status(task_id, "Failed: create_tables")
+
+        print("[STEP 9] CREATE script generated and executed.")
+        add_log(task_id, "CREATE script generated and ready for execution. Awaiting user approval to create tables.", role="assistant")
+
+        # mark awaiting approval in task state (this will be visible to frontend via /status)
+        tasks[task_id]['awaiting_approval'] = 'create'
+        set_task_status(task_id, "Awaiting approval: create_tables")
+        evt = threading.Event()
+        approval_events[task_id] = evt
+        def _wait_and_execute_create(task_id_local, evt_local, task_dir_local):
+            try:
+                print(f"[WAITER] waiting for approval for task {task_id_local}")
+                # Block in the background thread until approval is signaled
+                evt_local.wait()
+                print(f"[WAITER] approved {task_id_local}, executing CREATE script now...")
+                # Update task state
+                set_task_status(task_id_local, "Creating tables...")
+                # Ensure we compute the same path used elsewhere
+                sql_path = os.path.join(app.config['UPLOAD_FOLDER'], task_id_local, "create_schema.sql")
+                print(f"[WAITER] sql_path = {sql_path}, exists = {os.path.exists(sql_path)}")
+                if not os.path.exists(sql_path):
+                    add_log(task_id_local, f"❌ SQL file not found: {sql_path}")
+                    set_task_status(task_id_local, "Failed: create_tables")
+                    return
+
+                try:
+                    execute_sql_from_file(sql_path)
+                    add_log(task_id_local, "✅ Tables created.")
+                    set_task_status(task_id_local, "Completed: create_tables")
+                except Exception as exc:
+                    add_log(task_id_local, f"❌ Error executing SQL: {exc}")
+                    add_log(task_id_local, traceback.format_exc())
+                    set_task_status(task_id_local, "Failed: create_tables")
+            finally:
+                # cleanup awaiting flag and approval_events map entry
+                tasks.get(task_id_local, {}).pop('awaiting_approval', None)
+                approval_events.pop(task_id_local, None)
+                print(f"[WAITER] finished execution for task {task_id_local}")
+
+        # Launch the background waiter thread (daemon so it won't block server shutdown)
+        threading.Thread(target=_wait_and_execute_create, args=(task_id, evt, task_dir), daemon=True).start()
+
+
+
+        #------> sql Code Execution block starts here <------
 
         set_task_status(task_id, "Generating INSERT script...")
         print("[STEP 10] Generating INSERT script...")
@@ -536,7 +614,7 @@ def view_script(task_id, which):
 
     # Map expected filenames
     filenames = {
-        'create': 'create_Database_Script.py',
+        'create': 'create_schema.sql',
         'insert': 'insert_Data_Script.py'
     }
     filename = filenames[which]
@@ -591,7 +669,7 @@ def start_generation():
     data_medium = request.form.get('data_medium')
     files = request.files.getlist('csv_files')
     context = request.form['schema_context']
-    cleaned_context = clean_text(context)
+    #context = clean_text(context)
     print(f"[CONTEXT] Received schema context ({len(context)} chars).")
     base = app.config['UPLOAD_FOLDER']
     os.makedirs(base, exist_ok=True)
@@ -815,7 +893,7 @@ def start_generation():
 
     add_log(task_id, f"User Context: {context}", role="user")
     print(f"[THREAD] Launching background thread for task {task_id[:8]}...")
-    thread = threading.Thread(target=run_processing_pipeline, args=(task_id, source_path, cleaned_context))
+    thread = threading.Thread(target=run_processing_pipeline, args=(task_id, source_path, context))
     thread.start()
 
     # leave request; thread will capture subsequent background prints
@@ -837,6 +915,18 @@ def approve_action(task_id):
     if task_id not in tasks:
         return jsonify({"error": "Task not found."}), 404
 
+    # If task exists, check what it's actually awaiting (if present) so we can warn if mismatched
+    awaited = tasks.get(task_id, {}).get('awaiting_approval')
+    if awaited is None:
+        # No awaiting_approval flag — still allow the approve to proceed in case of a race,
+        # but inform in logs so it's obvious in the UI/server logs.
+        add_log(task_id, f"❌ Approve called for {action}, but pipeline was not awaiting approval.", role="assistant")
+        return jsonify({"ok": False, "message": "No approval awaited for this task."}), 409
+
+    if awaited != action:
+        # warn but allow approval — sometimes frontend state can get out of sync.
+        add_log(task_id, f"⚠️ Approval action mismatch. Task expected '{awaited}', but got '{action}'. Proceeding anyway.", role="assistant")
+
     # Signal the waiting background thread by setting the event
     evt = approval_events.get(task_id)
     if not evt:
@@ -845,11 +935,15 @@ def approve_action(task_id):
         return jsonify({"ok": False, "message": "No approval awaited for this task."}), 409
 
     try:
+        # keep your original add_log message (role=user)
         add_log(task_id, f"User approved: {action}.", role="user")
         set_task_status(task_id, f"User approved: {action}. Resuming...")
-        evt.set()  # resume the background thread
-        # remove the event from mapping — background thread will clean up too
-        approval_events.pop(task_id, None)
+
+        # Set the event to resume the background thread. Do NOT pop here; leave cleanup to the background thread
+        # to avoid races where both this route and the thread try to remove the event entry.
+        evt.set()
+
+        # Return success immediately; background thread will do the work and update logs/status.
         return jsonify({"ok": True, "message": f"Approved {action}."})
     except Exception as e:
         app.logger.exception("Error in approve_action")
@@ -866,37 +960,65 @@ def task_status(task_id):
 
 @app.route('/submit_review/<task_id>', methods=['POST'])
 def submit_review(task_id):
+    """
+    New endpoint to match the frontend review UI.
+    Expects JSON body:
+      { "action": "approve" }
+    or
+      { "action": "correct", "details": "correction text..." }
+
+    Replaces the previous text-classification-based endpoint.
+    """
     print(f"[ROUTE] POST /submit_review for Task {task_id[:8]}")
     data = request.get_json() or {}
-    feedback = data.get('feedback')
 
-    if not feedback or not isinstance(feedback, str) or not feedback.strip():
-        print("[ERROR] Empty feedback submitted.")
-        return jsonify({"error": "Please provide feedback text (start with 'yes' or 'no <details>')."}), 400
+    action = data.get('action')
+    details = data.get('details', '')
 
-    feedback = feedback.strip()
-    feedback_lower = feedback.lower()
+    # Basic validation
+    if not action or not isinstance(action, str):
+        print("[ERROR] Missing or invalid 'action' in request.")
+        return jsonify({"error": "Missing or invalid 'action' field. Use 'approve' or 'correct'."}), 400
 
-    if feedback_lower == 'yes':
-        print("[REVIEW] User approved schema.")
-        add_log(task_id, "User approved schema.", role="user")
-        thread = threading.Thread(target=continue_pipeline, args=(task_id,))
-        thread.start()
-        return jsonify({"message": "Approval received. Continuing pipeline."})
+    action = action.strip().lower()
 
-    if feedback_lower.startswith('no'):
-        correction_details = feedback[2:].strip()
-        print(f"[REVIEW] User requested corrections: {correction_details}")
-        if not correction_details:
-            return jsonify({"error": "Please provide correction details after 'no'."}), 400
-        add_log(task_id, f"User requested corrections: {correction_details}", role="user")
-        thread = threading.Thread(target=run_correction_loop, args=(task_id, correction_details))
-        thread.start()
-        return jsonify({"message": "Corrections received. Applying corrections."})
+    # Ensure task exists
+    if task_id not in tasks:
+        print(f"[ERROR] Task {task_id[:8]} not found.")
+        return jsonify({"error": "Task not found."}), 404
 
-    print("[ERROR] Invalid feedback format.")
-    return jsonify({"error": "Invalid feedback. Please start with 'yes' or 'no <details>'."}), 400
+    try:
+        if action == 'approve':
+            # User approved the schema — continue pipeline
+            print("[REVIEW] User approved schema (via action='approve').")
+            add_log(task_id, "User approved schema.", role="user")
+            # Fire-and-forget: continue pipeline in background
+            thread = threading.Thread(target=continue_pipeline, args=(task_id,), daemon=True)
+            thread.start()
+            return jsonify({"message": "Approval received. Continuing pipeline."}), 200
 
+        elif action == 'correct':
+            # User submitted corrections; 'details' must contain the corrections text
+            if not isinstance(details, str) or not details.strip():
+                print("[ERROR] Correction requested but no details supplied.")
+                return jsonify({"error": "Please provide correction details in the 'details' field."}), 400
+
+            correction_details = details.strip()
+            print(f"[REVIEW] User requested corrections: {correction_details}")
+            add_log(task_id, f"User requested corrections: {correction_details}", role="user")
+            thread = threading.Thread(target=run_correction_loop, args=(task_id, correction_details), daemon=True)
+            thread.start()
+            return jsonify({"message": "Corrections received. Applying corrections."}), 200
+
+        else:
+            print(f"[ERROR] Invalid action value: {action}")
+            return jsonify({"error": "Invalid action. Use 'approve' or 'correct'."}), 400
+
+    except Exception as e:
+        # Defensive: log exception and return 500
+        app.logger.exception("Error handling submit_review")
+        return jsonify({"error": str(e)}), 500
+    
 # -------------------- APP START --------------------
 if __name__ == '__main__':
     os.makedirs(app.config['UPLOAD_FOLDER'], exist_ok=True)

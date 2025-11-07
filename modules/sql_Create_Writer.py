@@ -7,7 +7,7 @@ project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if project_root not in sys.path:
     sys.path.insert(0, project_root)
 
-from modules.gemini_Call import api_call
+from modules.api_Call import api_call
 
 def generate_create_sql_writer_script(metadata_file, plantuml_file, output_file, model=None):
     """
@@ -53,9 +53,12 @@ def write_create_tables_sql():
     # for table_name in table_order:
     #     create_statement = f'''CREATE TABLE `{table_name}` ( ... );'''
     #     sql_statements.append(create_statement)
-
+    
+    # Get the directory of the current script to save the output file next to it.
+    script_dir = os.path.dirname(os.path.abspath(__file__))
     output_filename = "create_schema.sql"
-    with open(output_filename, "w", encoding="utf-8") as f:
+    output_path = os.path.join(script_dir, output_filename)
+    with open(output_path, "w", encoding="utf-8") as f:
         f.write("\\n".join(sql_statements))
     
     print(f"SQL create script written to {output_filename}")
@@ -70,7 +73,7 @@ Task:
 
 1.  Generate a complete Python script that defines SQL `CREATE TABLE` statements as strings.
 2.  The script should read table definitions from the provided metadata JSON.
-3.  The script must determine the correct table creation order by performing a topological sort based on foreign key dependencies.
+3.  The script must determine the correct table creation order by performing a topological sort based on foreign key dependencies. The create statements must respect these dependencies.
 4.  The script should first generate `DROP TABLE IF EXISTS ... CASCADE;` statements for each table in reverse dependency order.
 5.  Then, it should generate `CREATE TABLE ...;` statements for each table in the correct dependency order.
 6.  All generated SQL statements should be combined and written into a single output file named `create_schema.sql`.
@@ -78,8 +81,8 @@ Task:
 8.  You have to create a table for each of the entities entites present in the ER Diagram. Do Not Miss any of them. 
 9.   Check for all the Relations and the constraints that have to be implemented. make sure all of them are enforced while creating tables. 
 10.  Ensure the generated Python script is perfect, runs without errors, and uses only standard Python libraries.
-11.  Do not include any comments in the generated Python code.
-12.  The file u are writing should be in the same directory as this file.
+11.  The generated script should save its output .sql file in the same directory where the script itself is located. Do not include any comments in the generated Python code.
+12.  The file you are writing into i.e create_schema.sql should be in the same directory as this file.
 
 Here is the table metadata in JSON:
 {json.dumps(refined_metadata, indent=2)}
@@ -133,8 +136,7 @@ if __name__ == "__main__":
         generate_create_sql_writer_script(
             metadata_file=metadata_path,
             plantuml_file=puml_path,
-            output_file=output_script_path,
-            model='gpt-4o'  # Use the specified model for the test run
+            output_file=output_script_path  # Use the specified model for the test run
         )
         print(f"\nStandalone test complete. Check the generated script at: {output_script_path}")
     except Exception as e:

@@ -5,7 +5,7 @@ from dotenv import load_dotenv
 import subprocess
 import requests
 import google.generativeai as genai
-from .gemini_Call import api_call
+from .api_Call import api_call
 
 # ========== PATH CONFIG ==========
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -46,7 +46,8 @@ Output Requirements:
 1. You must output a single JSON object — no markdown, no text outside the JSON.
 2. Inside the JSON, include:
    - "reasoning": a list of step-by-step explanations (one per table) justifying
-     primary keys, foreign keys, and relationship cardinalities.
+     primary keys, foreign keys, and relationship cardinalities. Each item in the list
+     should be an object with "step" and "details" keys.
    - "plantuml_code": a string containing a valid PlantUML ER diagram.
 3. The PlantUML code must:
    - Start with `@startuml` and end with `@enduml`
@@ -54,10 +55,21 @@ Output Requirements:
    - Label primary keys as <<PK>> and foreign keys as <<FK>>.
    - Explicitly show cardinalities (1--N, 1--1, N--N).
 4. Follow 3NF design principles — avoid redundancy and ensure dependency preservation.
-
+5. If there is a common column with same name between tables with the same context then there needs to be a relationship between the tables.
 Important:
 - Do not include any explanation or markdown outside the JSON.
 - The JSON must be syntactically valid.
+- Follow this exact structure for the output:
+{
+  "reasoning": [
+    {
+      "step": "Describe the correction made",
+      "step": "Correction for a specific error",
+      "details": "Explain briefly why the change was required to resolve the error."
+    }
+  ],
+  "plantuml_code": "Full corrected PlantUML ER diagram code as a single string"
+}
 """
     )
 

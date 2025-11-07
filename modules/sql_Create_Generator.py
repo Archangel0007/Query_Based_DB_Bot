@@ -1,6 +1,6 @@
 import json
 import os
-from .gemini_Call import api_call
+from .api_Call import api_call
 from dotenv import load_dotenv
 import mysql.connector
 import logging
@@ -39,7 +39,7 @@ def get_db_connection():
         raise
 
 
-def generate_create_script(metadata_file, plantuml_file, output_file, model="gemini-2.5-flash"):
+def generate_create_script(metadata_file, plantuml_file, output_file, model="openai-2.5-flash"):
     with open(metadata_file, 'r') as file:
         refined_metadata = json.load(file)
 
@@ -122,7 +122,7 @@ if __name__ == '__main__':
 Return only a Python script that is fully executable as a single file. Do not include explanations, comments, or markdown. Use only standard libraries and mysql.connector.
 """
 
-    print("⏳ Generating Python script with Gemini...")
+    print("⏳ Generating Python script with openai...")
     py_code = api_call(prompt)
     if("```python" in py_code):
         py_code = py_code.split("```python")[1].split("```")[0]

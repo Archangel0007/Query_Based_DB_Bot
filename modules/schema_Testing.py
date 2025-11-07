@@ -2,7 +2,7 @@ import google.generativeai as genai
 import re
 import os
 from dotenv import load_dotenv
-from .gemini_Call import api_call
+from .api_Call import api_call
 import json
 
 def build_prompt_phase_1(user_query: str) -> str:
@@ -15,9 +15,9 @@ def build_prompt_phase_1(user_query: str) -> str:
 {
   "reasoning": [
     {
-      "step": "High-level explanation of the testing approach",
-      "details": "Why these test cases comprehensively validate the schema."
-    }
+      "step": "Title for each test case",
+      "details": "Reasoning for each test case design"
+    },
   ],
   "Test Cases": [
     {
@@ -34,7 +34,7 @@ def build_prompt_phase_1(user_query: str) -> str:
 
     prompt_phase1 = f"""
 You are a senior **Database QA Architect**.
-Your task is to design **10 detailed QA test cases** that validate a relational database schema
+Your task is to design **20 detailed QA test cases** that validate a relational database schema . These should test by giving simple natural language descriptions that would create sql queries to fetch data from the database to verify its correctness.
 derived from the following user query:
 
 --- USER QUERY ---
@@ -61,14 +61,14 @@ referential integrity, data type consistency, and normalization adherence.
    - Include a clear `reasoning` explaining why this test matters.
    - Assign an appropriate `category` and `severity`.
    - Add an optional `expected_result` if relevant.
+5. For each text case that u are generating give a reasoning block for it.
 
 --- OUTPUT FORMAT ---
-Return ONE valid JSON object **only** (no markdown, no extra text).
-It must strictly follow this structure:
+It must STRICTLY follow this structure:
 {json_structure_example}
 """
 
-    return prompt_phase1.strip()
+    return prompt_phase1
 
 def run_phase1(user_query_path, output_path):
     """Generate Phase 1 testcases from a user query and write to output_path.

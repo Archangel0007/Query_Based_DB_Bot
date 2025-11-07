@@ -2,3 +2,16 @@ streamlit>=1.20.0
 openai>=0.27.0
 requests>=2.31.0
 google-genai>=0.2.0
+flask
+pdfplumber
+docx
+exceptions
+python-dotenv
+python-docx
+bs4
+markdownify
+google.generativeai
+mysql
+mysql.connector
+boto3
+pymongo

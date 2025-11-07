@@ -169,7 +169,7 @@ def save_generated_code(code: str, filename: str = "generated_code.py") -> None:
 
 if __name__ == "__main__":
 
-	filepath = '../Run_Space/Test_Runner/generated_sql_writer.py'
+	filepath = '../Run_Space/Test_Runner/generated_table_converter.py'
 
 	if not os.path.exists(filepath):
 		logger.error(f"File not found: {filepath}")

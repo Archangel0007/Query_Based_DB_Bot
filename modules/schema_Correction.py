@@ -7,7 +7,7 @@ from typing import Any, Dict, List, Union
 from dotenv import load_dotenv
 import google.generativeai as genai
 import re
-from .gemini_Call import api_call
+from .api_Call import api_call
 
 
 def load_json_file(path: str) -> Any:
@@ -39,7 +39,7 @@ def build_prompt(errors: list[dict[str, any]], puml: str, query_text: str) -> st
 {
   "reasoning": [
     {
-      "step": "Describe the correction made",
+      "step": "Correction for a specific error",
       "details": "Explain briefly why the change was required to resolve the error."
     }
   ],
@@ -63,6 +63,7 @@ def build_prompt(errors: list[dict[str, any]], puml: str, query_text: str) -> st
     3. Ensure the corrected diagram is logically consistent and syntactically valid PlantUML code.
     4. Return ONLY a single JSON object that exactly follows the format below.
        - No markdown, no explanations, no extra text.
+    5. STRICTLY try not to remove any connections or tables unless absolutely necessary to fix errors. If there is a connection or table that seems redundant but is not mentioned in the errors, keep it as is.
 
     --- REQUIRED JSON FORMAT ---
     {json_structure_example}

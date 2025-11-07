@@ -108,15 +108,6 @@
                 </div>
             </div>
         </div>
-
-        <div class="review-container" id="review-container" style="display: none;">
-            <h3>🔎 Step 2: Review and Confirm Schema</h3>
-            <p>Is this schema correct? Type 'yes' to confirm, or 'no' followed by your corrections.</p>
-            <textarea id="review-feedback" rows="3"></textarea>
-            <button id="submit-review-btn">Submit Feedback</button>
-        </div>    
-        <!-- Approval buttons container (populated dynamically) -->
-        <div id="approval-container" style="display:none; margin-top:12px;"></div>
     
         <div id="chat-section" style="display: none;">
             <h2>🧠 Schema Chat</h2>
@@ -130,7 +121,8 @@
 {% endblock %}
 
 {% block scripts %}
-    <script>
+    
+<script>
         const form = document.getElementById('upload-form');
         const chatContainer = document.getElementById('chat-container');
         const statusText = document.getElementById('status-text');
@@ -142,6 +134,9 @@
         const logsToggleBtn = document.getElementById('logs-toggle-btn');
         const logsContainer = document.getElementById('logs-container');
         const logsWrapper = document.getElementById('logs-wrapper');
+
+        window.schemaPromptActive = false;
+
 
         // Helper to insert an element after a reference node
         function insertAfter(newNode, referenceNode) {
@@ -179,6 +174,8 @@
 
         let taskId = null;
         let pollingInterval = null;
+        let scriptApprovalShown = false;
+        window.schemaCorrectionOpen = window.schemaCorrectionOpen || false; // global flag used by prompts/polling
 
     function showSelectedMediumInput() {
         // Hide all input groups first
@@ -418,40 +415,496 @@
             });
         }
 
-        async function pollStatus() {
-            if (!taskId) return;
+        function addChatMessage(role, htmlContent, insertAfterEl = null) {
+    const msgDiv = document.createElement('div');
+    msgDiv.className = `chat-msg ${role}`;
+    msgDiv.innerHTML = htmlContent;
 
-            // Before clearing the UI, record which reasoning panels are currently open.
-            const openReasoningIds = new Set();
-            document.querySelectorAll('.reasoning-panel').forEach(panel => {
-                if (panel.style.display === 'block') {
-                    openReasoningIds.add(panel.id);
+    // If a reference element is given, insert after it; otherwise append to end
+    if (insertAfterEl && insertAfterEl.parentNode === chatContainer) {
+        insertAfterEl.insertAdjacentElement('afterend', msgDiv);
+    } else {
+        chatContainer.appendChild(msgDiv);
+    }
+
+    // Scroll only if new message is at the bottom
+    if (!insertAfterEl) {
+        chatContainer.scrollTop = chatContainer.scrollHeight;
+    }
+
+    return msgDiv;
+}
+
+
+        // helper: compute a short snippet from an assistant message DOM node
+function getAssistantSnippet(assistantMsgDiv) {
+    if (!assistantMsgDiv) return '';
+    // find the assistant text portion (strip labels like "Assistant" or "You")
+    const txt = assistantMsgDiv.innerText || '';
+    // remove the leading "Assistant" or "You" if present
+    const parts = txt.split('\n').slice(1); // safe: first line is the label
+    const joined = parts.join(' ').trim();
+    return joined.substring(0, 60); // first 60 chars as a fingerprint/snippet
+}
+
+
+function showSchemaApprovalPrompt(schemaText) {
+    // Guard to prevent multiple schema prompts from stacking
+    if (window.schemaPromptActive || window.schemaCorrectionOpen) return;
+    window.schemaPromptActive = true;
+        // guard: don't create duplicate schema prompt or create while correction UI open
+    if (document.querySelector('#schema-ok-btn') || window.schemaCorrectionOpen) {
+        // either already shown, or user is editing a correction -> do nothing
+        return;
+    }
+
+    const msg = `
+        <b>Assistant:</b><br>
+        Please review the schema below:<br><pre>${schemaText}</pre>
+        <div style="margin-top:8px;">
+            <button id="schema-ok-btn" class="btn">✅ Okay</button>
+            <button id="schema-notok-btn" class="btn">❌ Not okay</button>
+        </div>
+    `;
+    const msgDiv = addChatMessage('assistant', msg);
+
+    // --- helper for retry-based feedback POST ---
+    async function sendReviewWithRetries(action, details = '', attempt = 0) {
+        if (!taskId) return { ok: false, err: 'no_taskid' };
+        const maxAttempts = 3;
+        const backoffs = [500, 1200, 2500];
+
+        try {
+            const res = await fetch(`/submit_review/${taskId}`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ action, details })
+            });
+            if (res.ok) {
+                const payload = await res.json().catch(()=>null);
+                return { ok: true, payload };
+            } else {
+                const txt = await res.text().catch(()=>'<no-body>');
+                console.warn('submit_review non-ok', res.status, txt);
+            }
+        } catch (err) {
+            console.warn('submit_review network error', err);
+        }
+
+        if (attempt + 1 < maxAttempts) {
+            await new Promise(r => setTimeout(r, backoffs[attempt] || 1000));
+            return sendReviewWithRetries(action, details, attempt + 1);
+        }
+
+        return { ok: false, err: 'all_attempts_failed' };
+    }
+
+    // --- pause polling if correction UI open ---
+    if (!window._pollStatusOriginal) {
+        window._pollStatusOriginal = window.pollStatus;
+        window.pollStatus = async function() {
+            if (window.schemaCorrectionOpen) return;
+            return window._pollStatusOriginal.apply(this, arguments);
+        };
+    }
+
+    // ===== ✅ OK button =====
+    const okBtn = msgDiv.querySelector('#schema-ok-btn');
+    okBtn.addEventListener('click', async () => {
+        window.schemaPromptActive = false;
+        okBtn.disabled = true;
+        const existingCorrection = document.getElementById('schema-correction-area');
+        if (existingCorrection) existingCorrection.remove();
+        window.schemaCorrectionOpen = false;
+
+        // create optimistic user message and insert it immediately after the assistant prompt
+    //const userMsg = addChatMessage('user', '✅ Okay', msgDiv);
+    //userMsg.classList.add('local-msg', 'pending-review');
+    // attach snippet so pollStatus can re-insert in the right place later
+    //userMsg.dataset.insertAfterSnippet = getAssistantSnippet(msgDiv);
+    // move it to appear right after the assistant message (better UX)
+    //morag msgDiv.insertAdjacentElement('afterend', userMsg);
+    // Skip showing "✅ Okay" visually but keep all logic
+const userMsg = document.createElement('div');
+userMsg.classList.add('local-msg', 'pending-review');
+userMsg.dataset.insertAfterSnippet = getAssistantSnippet(msgDiv);
+
+
+
+        const res = await sendReviewWithRetries('approve');
+        if (res.ok) {
+            userMsg.classList.remove('pending-review');
+            userMsg.classList.add('confirmed-review');
+            try { await pollStatus(); } catch(e){ console.warn(e); }
+            if (!pollingInterval) pollingInterval = setInterval(pollStatus, 2000);
+        } else {
+            userMsg.classList.remove('pending-review');
+            userMsg.classList.add('failed-notify');
+            const hint = document.createElement('span');
+            hint.className = 'muted';
+            hint.textContent = ' (failed to notify server)';
+            userMsg.appendChild(hint);
+
+            const retryBtn = document.createElement('button');
+            retryBtn.className = 'btn small';
+            retryBtn.textContent = 'Retry notify';
+            retryBtn.style.marginLeft = '8px';
+            userMsg.appendChild(retryBtn);
+
+            retryBtn.addEventListener('click', async () => {
+                retryBtn.disabled = true; retryBtn.textContent = 'Retrying...';
+                const r2 = await sendReviewWithRetries('approve');
+                if (r2.ok) {
+                    userMsg.classList.remove('failed-notify');
+                    userMsg.classList.add('confirmed-review');
+                    retryBtn.remove(); hint.remove();
+                    try { await pollStatus(); } catch(e){ console.warn(e); }
+                } else {
+                    retryBtn.disabled = false; retryBtn.textContent = 'Retry notify';
+                }
+            });
+        }
+    });
+
+    // ===== ❌ NOT OK button =====
+    const notOkBtn = msgDiv.querySelector('#schema-notok-btn');
+    notOkBtn.addEventListener('click', () => {
+        // prevent duplicates
+        if (document.getElementById('schema-correction-area')) {
+            document.getElementById('schema-correction-text').focus();
+            return;
+        }
+
+        // show quick local "Not okay" message
+        // morag const notOkMsg = addChatMessage('user', '❌ Not okay', msgDiv);
+        //notOkMsg.classList.add('local-msg');
+       // notOkMsg.dataset.insertAfterSnippet = getAssistantSnippet(msgDiv);
+       // msgDiv.insertAdjacentElement('afterend', notOkMsg);
+         
+       // Skip showing "❌ Not okay" visually but keep tracking context
+        const notOkMsg = document.createElement('div');
+        notOkMsg.classList.add('local-msg');
+        notOkMsg.dataset.insertAfterSnippet = getAssistantSnippet(msgDiv);
+
+
+        // mark correction area open (pauses polling)
+        window.schemaCorrectionOpen = true;
+
+        const correctionArea = document.createElement('div');
+        correctionArea.id = 'schema-correction-area';
+        correctionArea.dataset.insertAfterSnippet = getAssistantSnippet(msgDiv);
+        correctionArea.classList.add('local-msg'); // ensure pollStatus preserves it
+        correctionArea.style.margin = '8px 0';
+        correctionArea.innerHTML = `
+            <textarea id="schema-correction-text" rows="3" style="width:100%;" placeholder="Please specify corrections..."></textarea>
+            <div style="margin-top:6px;">
+                <button id="schema-correction-submit" class="btn">Submit correction</button>
+                <button id="schema-correction-cancel" class="btn">Cancel</button>
+            </div>
+        `;
+        chatContainer.appendChild(correctionArea);
+        chatContainer.scrollTop = chatContainer.scrollHeight;
+        document.getElementById('schema-correction-text').focus();
+
+        // --- Submit correction ---
+        correctionArea.querySelector('#schema-correction-submit').addEventListener('click', async () => {
+            window.schemaPromptActive = false;
+            const txt = document.getElementById('schema-correction-text').value.trim();
+            if (!txt) { alert('Please enter your corrections before submitting.'); return; }
+
+            const userCorrectionMsg = addChatMessage('user', txt);
+            userCorrectionMsg.classList.add('local-msg', 'pending-review');
+
+            correctionArea.remove();
+            window.schemaCorrectionOpen = false;
+
+            const r = await sendReviewWithRetries('correct', txt);
+            if (r.ok) {
+                userCorrectionMsg.classList.remove('pending-review');
+                userCorrectionMsg.classList.add('confirmed-review');
+                try { await pollStatus(); } catch(e){ console.warn(e); }
+                if (!pollingInterval) pollingInterval = setInterval(pollStatus, 2000);
+            } else {
+                userCorrectionMsg.classList.remove('pending-review');
+                userCorrectionMsg.classList.add('failed-notify');
+
+                const hint = document.createElement('span');
+                hint.className = 'muted';
+                hint.textContent = ' (failed to notify server)';
+                userCorrectionMsg.appendChild(hint);
+
+                const retryBtn = document.createElement('button');
+                retryBtn.className = 'btn small';
+                retryBtn.textContent = 'Retry notify';
+                retryBtn.style.marginLeft = '8px';
+                userCorrectionMsg.appendChild(retryBtn);
+
+                retryBtn.addEventListener('click', async () => {
+                    retryBtn.disabled = true; retryBtn.textContent = 'Retrying...';
+                    const r2 = await sendReviewWithRetries('correct', txt);
+                    if (r2.ok) {
+                        userCorrectionMsg.classList.remove('failed-notify');
+                        userCorrectionMsg.classList.add('confirmed-review');
+                        retryBtn.remove(); hint.remove();
+                        try { await pollStatus(); } catch(e){ console.warn(e); }
+                    } else {
+                        retryBtn.disabled = false; retryBtn.textContent = 'Retry notify';
+                    }
+                });
+            }
+        });
+
+        // --- Cancel correction ---
+        correctionArea.querySelector('#schema-correction-cancel').addEventListener('click', () => {
+    window.schemaPromptActive = false;
+    correctionArea.remove();
+    window.schemaCorrectionOpen = false;
+    // Keep "❌ Not okay" visible but allow reopening correction box
+    const reopenBtn = document.createElement('button');
+    reopenBtn.className = 'btn small';
+    reopenBtn.textContent = '✏️ Reopen correction';
+    reopenBtn.style.marginLeft = '8px';
+    reopenBtn.onclick = () => {
+        reopenBtn.remove();
+        notOkBtn.click(); // triggers the correction box again
+    };
+    notOkMsg.appendChild(reopenBtn);
+    try { pollStatus(); } catch(e){ console.warn(e); }
+});
+
+    });
+}
+
+
+function showScriptApprovalPrompt(type) {
+    const msg = `
+        <b>Assistant:</b><br>
+        Please review the ${type === 'create' ? 'CREATE TABLE' : 'INSERT INTO'} script.<br>
+        <div style="margin-top:8px;">
+            <button id="view-script-btn" class="btn">👁️ View Script</button>
+            <button id="approve-script-btn" class="btn">✅ Approve</button>
+        </div>
+    `;
+    const msgDiv = addChatMessage('assistant', msg);
+        // guard so pollStatus won't create another prompt while one is visible
+    //scriptApprovalShown = true;
+    msgDiv.querySelector('#view-script-btn').addEventListener('click', () => {
+        window.open(`/view_script/${taskId}/${type}`, '_blank', 'noopener');
+    });
+
+    // helper: try sending approval to server with two endpoint patterns and retries
+    async function sendApprovalWithRetries(attempt = 0) {
+        if (!taskId) {
+            console.error('No taskId available for approval');
+            return { ok: false, err: 'no_taskid' };
+        }
+
+        const endpoints = [
+            { url: `/approve_script/${taskId}/${type}`, opts: { method: 'POST' } },
+            { url: `/approve_action/${taskId}`, opts: { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action: type }) } }
+        ];
+
+        // try endpoints sequentially on each attempt
+        for (let ep of endpoints) {
+            try {
+                console.debug(`Approval attempt ${attempt+1}: POST ${ep.url}`);
+                const res = await fetch(ep.url, ep.opts);
+                if (res.ok) {
+                    const payload = await res.json().catch(()=>null);
+                    console.debug('Approval succeeded at', ep.url, 'payload=', payload);
+                    return { ok: true, url: ep.url, payload };
+                } else {
+                    const txt = await res.text().catch(()=>'<no-body>');
+                    console.warn('Approval endpoint returned non-ok', ep.url, res.status, txt);
+                    // continue to fallback endpoint
+                }
+            } catch (err) {
+                console.warn('Approval network error for', ep.url, err);
+                // continue to fallback endpoint
+            }
+        }
+
+        // if we reached here, this attempt failed — maybe retry
+        if (attempt < 2) {
+            // exponential-ish backoff
+            const backoffs = [500, 1200, 2500];
+            await new Promise(r => setTimeout(r, backoffs[attempt] || 1000));
+            return sendApprovalWithRetries(attempt + 1);
+        }
+
+        // final failure
+        return { ok: false, err: 'all_attempts_failed' };
+    }
+
+    msgDiv.querySelector('#approve-script-btn').addEventListener('click', async () => {
+        // Protect from double clicks
+        const btn = msgDiv.querySelector('#approve-script-btn');
+        btn.disabled = true;
+
+        // Immediately add optimistic local user message so user sees feedback
+       // const userMsgDiv = addChatMessage('user', '✅ Approved', msgDiv);
+       // userMsgDiv.classList.add('local-msg', 'pending-approve');
+        //userMsgDiv.dataset.insertAfterSnippet = getAssistantSnippet(msgDiv);
+        // morag msgDiv.insertAdjacentElement('afterend', userMsgDiv);
+        // Skip showing the "✅ Approved" message but keep functionality working
+        const userMsgDiv = document.createElement('div');
+        userMsgDiv.classList.add('local-msg', 'pending-approve');
+        userMsgDiv.dataset.insertAfterSnippet = getAssistantSnippet(msgDiv);
+// Not inserted into DOM — internal tracking only
+
+
+        // Attempt to notify server with retries
+        const result = await sendApprovalWithRetries(0);
+
+        if (result.ok) {
+            // success -> mark local message confirmed, re-poll to get server-side log
+            userMsgDiv.classList.remove('pending-approve');
+            userMsgDiv.classList.add('confirmed-approve');
+            try {
+                // call pollStatus() to immediately sync; if pollingInterval is stopped, restart it
+                await pollStatus();
+                if (!pollingInterval) {
+                    pollingInterval = setInterval(pollStatus, 2000);
+                }
+            } catch (err) {
+                console.warn('poll after approve failed', err);
+            }
+            if (result.ok) {
+    userMsgDiv.classList.remove('pending-approve');
+    userMsgDiv.classList.add('confirmed-approve');
+    try {
+        await pollStatus();
+        if (!pollingInterval) { pollingInterval = setInterval(pollStatus, 2000); }
+    } catch (err) { console.warn('poll after approve failed', err); }
+    // release guard so new approvals later can appear
+    scriptApprovalShown = false;
+}
+
+            
+        } else {
+            // failure -> keep local message but mark failed and present retry UI
+            userMsgDiv.classList.remove('pending-approve');
+            userMsgDiv.classList.add('failed-notify');
+
+            // show small inline retry button for this message
+            const retryBtn = document.createElement('button');
+            retryBtn.className = 'btn small';
+            retryBtn.textContent = 'Retry notify';
+            retryBtn.style.marginLeft = '8px';
+            userMsgDiv.appendChild(retryBtn);
+
+            retryBtn.addEventListener('click', async () => {
+                retryBtn.disabled = true;
+                retryBtn.textContent = 'Retrying...';
+                // attempt again
+                const r2 = await sendApprovalWithRetries(0);
+                if (r2.ok) {
+                    userMsgDiv.classList.remove('failed-notify');
+                    userMsgDiv.classList.add('confirmed-approve');
+                    retryBtn.remove();
+                    // re-sync
+                    try { await pollStatus(); } catch (e) { console.warn(e); }
+                } else {
+                    retryBtn.disabled = false;
+                    retryBtn.textContent = 'Retry notify';
+                    console.warn('Retry failed', r2.err || r2);
                 }
             });
 
-            const response = await fetch(`/status/${taskId}`);
-            const data = await response.json();
+            // set visual hint to user
+            const hint = document.createElement('span');
+            hint.className = 'muted';
+            hint.style.marginLeft = '8px';
+            hint.textContent = ' (failed to notify server)';
+            userMsgDiv.appendChild(hint);
 
-            // Update status text
-            statusText.textContent = data.status;
-            if (data.status === 'Completed' || data.status.startsWith('Error')) {
-                spinner.style.display = 'none';
-                clearInterval(pollingInterval);
-            } else {
-                spinner.style.display = 'inline-block';
-            }
+            console.warn('Approval: failed to notify server after retries');
+        }
+    });
+}
 
-            // Update chat logs
-            chatContainer.innerHTML = ''; // Clear previous logs
-            data.logs.forEach((msg, index) => {
+    async function pollStatus() {
+     if (window.schemaPromptActive || window.schemaCorrectionOpen) return;
+    if (!taskId) return;
+
+    // --- Preserve any local-only user messages (so they won't get wiped out) ---
+    const localNodes = [];
+    chatContainer.querySelectorAll('.local-msg').forEach(node => {
+        localNodes.push(node.cloneNode(true)); // clone to reinsert later
+    });
+
+    // Before clearing the UI, record which reasoning panels were open.
+    const openReasoningIds = new Set();
+    document.querySelectorAll('.reasoning-panel').forEach(panel => {
+        if (panel.style.display === 'block') {
+            openReasoningIds.add(panel.id);
+        }
+    });
+
+    // --- Fetch status (network-safe) ---
+    let response, data;
+    try {
+        response = await fetch(`/status/${taskId}`, { cache: 'no-store' });
+    } catch (err) {
+        console.warn('pollStatus: network error fetching status', err);
+        showServerDownAlert();
+        // don't attempt to render chat; return early
+        return;
+    }
+
+    if (!response.ok) {
+        console.warn('pollStatus: non-OK response', response.status);
+        if (response.status >= 500) showServerDownAlert();
+        return;
+    }
+
+    try {
+        data = await response.json();
+    } catch (err) {
+        console.warn('pollStatus: failed to parse JSON', err);
+        showServerDownAlert();
+        return;
+    }
+
+    // Update status text & spinner
+    statusText.textContent = data.status || '';
+    if (data.status === 'Completed' || (data.status && data.status.startsWith && data.status.startsWith('Error'))) {
+        spinner.style.display = 'none';
+        if (typeof pollingInterval !== 'undefined' && pollingInterval) {
+            clearInterval(pollingInterval);
+            pollingInterval = null;
+        }
+    } else {
+        spinner.style.display = 'inline-block';
+    }
+
+    // ---------------- Render chat from server logs (fresh)
+    // IMPORTANT: if the correction UI is open, skip rebuilding the chat area
+    // (we will still update logs + schema image below).
+    if (!window.schemaCorrectionOpen) {
+        try {
+            chatContainer.innerHTML = ''; // Clear previous logs (we will re-append local afterwards)
+
+            const serverLogs = data.logs || [];
+            const existingUserTexts = [];
+
+            serverLogs.forEach((msg, index) => {
                 const msgDiv = document.createElement('div');
-                msgDiv.className = `chat-msg ${msg.role}`;
-                
-                let contentHTML = `<b>${msg.role === 'user' ? 'You' : 'Assistant'}</b><br>${msg.text.replace(/\n/g, '<br>')}`;
+                msgDiv.className = `chat-msg ${msg.role || ''}`;
 
-                // Check if there is reasoning data to display
+                const safeText = (msg.text || '').replace(/\n/g, '<br>');
+                let contentHTML = `<b>${msg.role === 'user' ? 'You' : 'Assistant'}</b><br>${safeText}`;
+
+                // save user text for dedupe
+                if (msg.role === 'user') {
+                    const tempDiv = document.createElement('div');
+                    tempDiv.innerHTML = safeText;
+                    existingUserTexts.push(tempDiv.innerText.trim());
+                }
+
+                // reasoning panel support
                 if (msg.reasoning && msg.reasoning.length > 0) {
-                    const reasoningId = `reasoning-${index}`; // Use a stable ID based on message index
+                    const reasoningId = `reasoning-${index}`;
                     const isOpen = openReasoningIds.has(reasoningId);
                     const buttonText = isOpen ? 'Hide reasoning' : 'Show reasoning';
                     const panelStyle = isOpen ? 'display:block;' : 'display:none;';
@@ -459,7 +912,6 @@
                     contentHTML += ` <button class="reasoning-toggle-btn" data-target="${reasoningId}">${buttonText}</button>`;
 
                     let reasoningHTML = '';
-                    // Check if reasoning is in the new structured format (array of objects with step/details)
                     if (Array.isArray(msg.reasoning) && msg.reasoning.length > 0 && msg.reasoning[0].step && msg.reasoning[0].details) {
                         reasoningHTML = msg.reasoning.map(item => `
                             <div class="reasoning-item">
@@ -468,7 +920,6 @@
                             </div>
                         `).join('');
                     } else {
-                        // Fallback for other JSON structures
                         reasoningHTML = `<pre>${JSON.stringify(msg.reasoning, null, 2)}</pre>`;
                     }
 
@@ -479,140 +930,259 @@
                 chatContainer.appendChild(msgDiv);
             });
 
-            // Add event listeners to the new buttons
+            // Wire reasoning toggle buttons (avoid adding duplicate listeners)
             document.querySelectorAll('.reasoning-toggle-btn').forEach(btn => {
-                btn.addEventListener('click', () => {
-                    const targetId = btn.getAttribute('data-target');
-                    const panel = document.getElementById(targetId);
-                    const isVisible = panel.style.display === 'block';
-                    panel.style.display = isVisible ? 'none' : 'block';
-                    btn.textContent = isVisible ? 'Show reasoning' : 'Hide reasoning';
-                });
+                if (!btn._wired) {
+                    btn._wired = true;
+                    btn.addEventListener('click', () => {
+                        const targetId = btn.getAttribute('data-target');
+                        const panel = document.getElementById(targetId);
+                        if (!panel) return;
+                        const isVisible = panel.style.display === 'block';
+                        panel.style.display = isVisible ? 'none' : 'block';
+                        btn.textContent = isVisible ? 'Show reasoning' : 'Hide reasoning';
+                    });
+                }
             });
+
+            // Re-append preserved local nodes, but dedupe
+            localNodes.forEach(clone => {
+    // normalize clone text for dedupe
+    const temp = document.createElement('div');
+    temp.innerHTML = clone.innerHTML;
+    const cloneText = temp.innerText.trim();
+
+    if (existingUserTexts.includes(cloneText)) {
+        return; // server already recorded it
+    }
+
+    // prefer inserting near the assistant prompt if we have a snippet
+    const snippet = clone.dataset && clone.dataset.insertAfterSnippet;
+    if (snippet) {
+        // find a candidate assistant message that includes the snippet
+        const assistantCandidates = Array.from(chatContainer.querySelectorAll('.chat-msg'))
+            .filter(n => {
+                // identify assistant messages: check first bold label or innerText first token
+                const b = n.querySelector('b');
+                if (b && b.innerText.toLowerCase().includes('assistant')) return true;
+                // fallback: if element isn't user-labeled, consider it assistant
+                return !b || (b && !b.innerText.toLowerCase().includes('you'));
+            });
+
+        const target = assistantCandidates.find(n => (n.innerText || '').includes(snippet));
+        if (target) {
+            // insert right after the matching assistant message
+            target.insertAdjacentElement('afterend', clone);
+            // ensure marker stays for future polls
+            clone.classList.add('local-msg');
+            return;
+        }
+    }
+
+    // fallback to appending at end
+    clone.classList.add('local-msg');
+    chatContainer.appendChild(clone);
+});
+
+
             chatContainer.scrollTop = chatContainer.scrollHeight;
 
-            // Update logs panel (system logs captured from server prints). Render fully expanded entries.
-            if (logsContainer) {
-                logsContainer.innerHTML = '';
-                const logs = data.system_logs || [];
-                if (logs.length === 0) {
-                    const none = document.createElement('div');
-                    none.className = 'muted';
-                    none.textContent = 'No logs available yet.';
-                    logsContainer.appendChild(none);
-                } else {
-                    logs.forEach(l => {
-                        const entry = document.createElement('div');
-                        entry.className = 'log-entry';
-                        const hdr = document.createElement('div');
-                        hdr.className = 'log-header';
-                        const ts = document.createElement('span');
-                        ts.className = 'log-ts';
-                        ts.textContent = l.time ? new Date(l.time).toLocaleString() : '';
-                        hdr.appendChild(ts);
-                        const body = document.createElement('pre');
-                        body.textContent = l.text || '';
-                        body.style.whiteSpace = 'pre-wrap';
-                        entry.appendChild(hdr);
-                        entry.appendChild(body);
-                        logsContainer.appendChild(entry);
-                    });
-                    // scroll to bottom so latest logs are visible
-                    logsContainer.scrollTop = logsContainer.scrollHeight;
-                }
-            }
-
-            // Show schema image if available
-            if (data.schema_image_url) {
-                const imageUrl = `${data.schema_image_url}?t=${new Date().getTime()}`;
-                let img = schemaImageContainer.querySelector('img');
-                if (!img) {
-                    schemaImageContainer.innerHTML = `<img src="${imageUrl}" alt="Generated Schema">`;
-                    img = schemaImageContainer.querySelector('img');
-                    img.addEventListener('click', () => showImageModal(imageUrl));
-                } else {
-                    // Update src to refresh the image if it changed
-                    if (img.src !== imageUrl) img.src = imageUrl;
-                }
-                schemaImageContainer.style.display = 'block';
-            }
-
-            // Show review box if awaiting review
-            if (data.status === 'Awaiting user review' && reviewContainer.style.display === 'none') {
-                reviewContainer.style.display = 'block';
-            }
-
-                        // --- Approval UI (show Approve+Regenerate only when awaiting approval) ---
-            
-            // Approval area
-const approvalContainer = document.getElementById('approval-container');
-approvalContainer.innerHTML = '';
-approvalContainer.style.display = 'none';
-const awaiting = data.awaiting_approval || null;
-if (awaiting) {
-    approvalContainer.style.display = 'block';
-
-    const viewBtn = document.createElement('button');
-    viewBtn.className = 'btn';
-    viewBtn.style.marginRight = '8px';
-    viewBtn.textContent = '👁️ View Script';
-    viewBtn.onclick = () => {
-        window.open(`/view_script/${taskId}/${awaiting}`, '_blank', 'noopener');
-    };
-
-    const approveBtn = document.createElement('button');
-    approveBtn.className = 'btn';
-    approveBtn.style.marginRight = '8px';
-    approveBtn.textContent = awaiting === 'create' ? '✅ Approve table creation' : '✅ Approve table insertion';
-
-    const regenBtn = document.createElement('button');
-    regenBtn.className = 'btn';
-    regenBtn.textContent = '🔁 Regenerate (no-op)';
-    regenBtn.style.opacity = '0.85';
-
-    approveBtn.onclick = async () => {
-        approveBtn.disabled = true;
-        approveBtn.textContent = 'Running...';
-        try {
-            const resp = await fetch(`/approve_action/${taskId}`, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ action: awaiting })
-            });
-            const payload = await resp.json();
-            if (!resp.ok) {
-                alert('Approval failed: ' + (payload.error || payload.message || 'Unknown error'));
-                approveBtn.disabled = false;
-                approveBtn.textContent = awaiting === 'create' ? '✅ Approve table creation' : '✅ Approve table insertion';
-            } else {
-                // status will update on next poll and approval UI will disappear
-            }
         } catch (err) {
-            alert('Network error during approval: ' + err.message);
-            approveBtn.disabled = false;
-            approveBtn.textContent = awaiting === 'create' ? '✅ Approve table creation' : '✅ Approve table insertion';
+            console.error('Error while updating chat in pollStatus:', err);
         }
-    };
+    } else {
+        // If correction UI is open, don't rebuild chat. Re-append any preserved local nodes
+        // that might not exist in the DOM yet (dedupe by text).
+        try {
+            const serverLogs = data.logs || [];
+            const existingUserTexts = [];
+            serverLogs.forEach(msg => {
+                if (msg.role === 'user') {
+                    const temp = document.createElement('div');
+                    temp.innerHTML = (msg.text || '').replace(/\n/g, '<br>');
+                    existingUserTexts.push(temp.innerText.trim());
+                }
+            });
 
-    regenBtn.onclick = () => {
-        const lc = document.getElementById('logs-container') || document.getElementById('chat-container');
-        if (lc) {
-            const div = document.createElement('div');
-            div.className = 'log-entry';
-            div.textContent = `${new Date().toLocaleTimeString()} — Regenerate requested (no-op)`;
-            lc.appendChild(div);
-            lc.scrollTop = lc.scrollHeight;
+            localNodes.forEach(clone => {
+                const temp = document.createElement('div');
+                temp.innerHTML = clone.innerHTML;
+                const cloneText = temp.innerText.trim();
+                if (!existingUserTexts.includes(cloneText)) {
+                    clone.classList.add('local-msg');
+                    chatContainer.appendChild(clone);
+                }
+            });
+
+            chatContainer.scrollTop = chatContainer.scrollHeight;
+        } catch (err) {
+            console.warn('Error while preserving local nodes during correction:', err);
         }
-    };
+    }
 
-    approvalContainer.appendChild(viewBtn);
-    approvalContainer.appendChild(approveBtn);
-    approvalContainer.appendChild(regenBtn);
+    // ---------- Update logs panel (system logs) ----------
+    try {
+        if (logsContainer) {
+            logsContainer.innerHTML = '';
+            const logs = data.system_logs || [];
+            if (logs.length === 0) {
+                const none = document.createElement('div');
+                none.className = 'muted';
+                none.textContent = 'No logs available yet.';
+                logsContainer.appendChild(none);
+            } else {
+                logs.forEach(l => {
+                    const entry = document.createElement('div');
+                    entry.className = 'log-entry';
+                    const hdr = document.createElement('div');
+                    hdr.className = 'log-header';
+                    const ts = document.createElement('span');
+                    ts.className = 'log-ts';
+                    ts.textContent = l.time ? new Date(l.time).toLocaleString() : '';
+                    hdr.appendChild(ts);
+                    const body = document.createElement('pre');
+                    body.textContent = l.text || '';
+                    body.style.whiteSpace = 'pre-wrap';
+                    entry.appendChild(hdr);
+                    entry.appendChild(body);
+                    logsContainer.appendChild(entry);
+                });
+                logsContainer.scrollTop = logsContainer.scrollHeight;
+            }
+        }
+    } catch (err) {
+        console.warn('Error updating logs panel:', err);
+    }
+
+    // ---------- Schema image ----------
+    try {
+        if (data.schema_image_url) {
+            const imageUrl = `${data.schema_image_url}?t=${new Date().getTime()}`;
+            let img = schemaImageContainer.querySelector('img');
+            if (!img) {
+                schemaImageContainer.innerHTML = `<img src="${imageUrl}" alt="Generated Schema">`;
+                img = schemaImageContainer.querySelector('img');
+                img.addEventListener('click', () => showImageModal(imageUrl));
+            } else {
+                if (img.src !== imageUrl) img.src = imageUrl;
+            }
+            schemaImageContainer.style.display = 'block';
+        }
+    } catch (err) {
+        console.warn('Error updating schema image:', err);
+    }
+
+    
+       // --- Chat-based Approvals (schema review) ---
+try {
+    // if server wants schema review and we don't already have one shown, show it
+    if (data.status === 'Awaiting user review' && !document.querySelector('#schema-ok-btn') && !window.schemaCorrectionOpen) {
+        const schemaText = data.latest_schema || '';
+        showSchemaApprovalPrompt(schemaText);
+        submitReviewBtn.disabled = false;
+    }
+
+    // handle script create/insert approvals (guarded)
+    const currentAwaiting = data.awaiting_approval || null;
+    if (currentAwaiting && !scriptApprovalShown) {
+        showScriptApprovalPrompt(currentAwaiting);
+        // scriptApprovalShown is now set inside showScriptApprovalPrompt()
+    }
+
+    // if server no longer needs approval, reset the guard so future approvals can show
+    if (!currentAwaiting) {
+        scriptApprovalShown = false;
+    }
+} catch (err) {
+    console.warn('Error handling approval UI:', err);
 }
+
+
+
+}
+
+        
+function showServerDownAlert() {
+    // avoid duplicates
+    if (document.querySelector('#server-down-alert')) return;
+
+    const alertDiv = document.createElement('div');
+    alertDiv.id = 'server-down-alert';
+    alertDiv.className = 'chat-msg assistant';
+    // inline styles so you see it quickly — move to CSS if you prefer
+    alertDiv.style.background = '#fff3cd';
+    alertDiv.style.border = '1px solid #ffd966';
+    alertDiv.style.color = '#7a4b00';
+    alertDiv.style.padding = '10px';
+    alertDiv.style.marginTop = '10px';
+    alertDiv.style.borderRadius = '8px';
+    alertDiv.innerHTML = `
+        <b>⚠️ Server Disconnected</b><br>
+        The backend server appears to be offline. Please restart the Flask app if you stopped it.<br>
+        We'll keep trying to reconnect automatically.
+    `;
+    chatContainer.appendChild(alertDiv);
+    chatContainer.scrollTop = chatContainer.scrollHeight;
+
+    // hide spinner so user doesn't think something is still processing
+    if (spinner) spinner.style.display = 'none';
+}
+
+function removeServerDownAlert() {
+    const existing = document.querySelector('#server-down-alert');
+    if (existing) existing.remove();
+}
+
+function stopPollingAndStartReconnect() {
+    // stop the normal polling
+    if (pollingInterval) {
+        clearInterval(pollingInterval);
+        pollingInterval = null;
+    }
+
+    // if already trying to reconnect, don't start another
+    if (reconnectionInterval) return;
+
+    // try to ping the server every X seconds (choose a sane interval)
+    reconnectionInterval = setInterval(async () => {
+        try {
+            // minimal attempt: HEAD or GET on status root
+            const r = await fetch(`/status/${taskId}`, { cache: 'no-store' });
+            if (r.ok) {
+                // server restored
+                clearInterval(reconnectionInterval);
+                reconnectionInterval = null;
+                removeServerDownAlert();
+
+                // resume polling and immediately run one poll to sync UI
+                if (!pollingInterval) {
+                    // run one pollStatus immediately — ensure you don't recursively call setInterval from inside pollStatus
+                    pollStatus().catch(err => console.warn('pollStatus after reconnect failed', err));
+                    pollingInterval = setInterval(pollStatus, 2000);
+                }
+            } else {
+                console.debug('reconnect attempt: server still not OK', r.status);
+            }
+        } catch (e) {
+            console.debug('reconnect attempt failed (still offline)', e);
+        }
+    }, 3000); // try every 3s — tweak as needed
+}
+
+function stopReconnectLoop() {
+    if (reconnectionInterval) {
+        clearInterval(reconnectionInterval);
+        reconnectionInterval = null;
+    }
+}
+
  
 
-        }
+        
     </script>
+
+ 
+
 {% endblock %}
     
     <!-- Logs panel markup inserted outside scripts so elements exist for JS references -->

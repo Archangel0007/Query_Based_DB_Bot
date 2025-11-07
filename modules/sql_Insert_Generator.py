@@ -1,11 +1,10 @@
 import json
 import os
-from .gemini_Call import api_call
+from .api_Call import api_call
 
 def generate_insert_script(metadata_file,
                              plantuml_file,
-                             output_file,
-                             model="gemini-2.5-flash"):
+                             output_file):
     with open(metadata_file, 'r') as file:
         refined_metadata = json.load(file)
 
@@ -115,7 +114,7 @@ Use the following Python code as a format for inserting data from a CSV into a M
 Return only a Python script that is fully executable as a single file. Do not include explanations, comments, or markdown. Use only standard libraries, pandas, and mysql.connector.
 """
 
-    print("⏳ Generating Python script with Gemini...")
+    print("⏳ Generating Python script with openai...")
     py_code = api_call(prompt)
     # ensure output directory exists
     out_dir = os.path.dirname(output_file)

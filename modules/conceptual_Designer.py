@@ -3,7 +3,7 @@ import json
 import logging
 from dotenv import load_dotenv
 import google as genai
-from .gemini_Call import api_call
+from .api_Call import api_call
 
 # ========== PATH CONFIG ==========
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -112,7 +112,7 @@ def generate_dimensional_model(metadata_file=None, user_context_file=None, outpu
     # Pass the Python object directly to build_prompt, which will handle serialization.
     prompt = build_prompt(metadata_obj, user_context)
 
-    logger.info("🤖 Calling Gemini to generate the dimensional model...")
+    logger.info("🤖 Calling openai to generate the dimensional model...")
     result_text = api_call(prompt)
     # Clean the response to get only the JSON
     if result_text.startswith("```json"):
@@ -124,7 +124,7 @@ def generate_dimensional_model(metadata_file=None, user_context_file=None, outpu
         reasoning = response_data.get("reasoning")
 
         if not conceptual_data:
-            logger.error("❌ 'conceptual_data' not found in the Gemini response.")
+            logger.error("❌ 'conceptual_data' not found in the openai response.")
             raise ValueError("'conceptual_data' key missing from LLM response.")
 
         with open(output_json, "w", encoding="utf-8") as f:
@@ -133,7 +133,7 @@ def generate_dimensional_model(metadata_file=None, user_context_file=None, outpu
 
         return reasoning
     except json.JSONDecodeError:
-        logger.error("❌ Failed to parse JSON from Gemini response. Saving raw output for debugging.")
+        logger.error("❌ Failed to parse JSON from openai response. Saving raw output for debugging.")
         with open(output_json + ".error.txt", "w", encoding="utf-8") as f:
             f.write(result_text)
         raise
