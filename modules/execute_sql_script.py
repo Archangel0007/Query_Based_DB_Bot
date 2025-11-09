@@ -8,6 +8,7 @@ from db_utils import get_db_connection
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
 
+
 def translate_postgres_to_mysql(sql_command: str) -> str:
     """
     Performs simple translations of PostgreSQL data types to MySQL equivalents.
@@ -24,6 +25,7 @@ def translate_postgres_to_mysql(sql_command: str) -> str:
         sql_command = re.sub(pg_type, mysql_type, sql_command, flags=re.IGNORECASE)
     return sql_command
 
+
 def execute_sql_from_file(filepath: str):
     """
     Reads an SQL file, splits it into commands, and executes them against the database.
@@ -37,7 +39,6 @@ def execute_sql_from_file(filepath: str):
         with open(filepath, 'r', encoding='utf-8') as f:
             # Read the whole file and remove SQL single-line comments starting with --
             sql_full_script = f.read()
-            # remove single-line comments
             sql_full_script = re.sub(r'--.*', '', sql_full_script)
     except Exception as e:
         logging.error(f"Failed to read SQL file {filepath}: {e}")
@@ -56,25 +57,26 @@ def execute_sql_from_file(filepath: str):
     except Exception as e:
         logging.error(f"Failed to obtain DB connection or cursor: {e}")
         logging.error(traceback.format_exc())
-        # Ensure we don't proceed if no connection
         if cursor:
-            try: cursor.close()
-            except Exception: pass
+            try:
+                cursor.close()
+            except Exception:
+                pass
         if conn:
-            try: conn.close()
-            except Exception: pass
+            try:
+                conn.close()
+            except Exception:
+                pass
         return
 
     try:
         for idx, command in enumerate(sql_commands, start=1):
-            # Skip PostgreSQL-specific SET commands
             if command.strip() == "":
                 continue
             if command.upper().startswith('SET'):
                 logging.info(f"Skipping command (SET): {command[:120]}...")
                 continue
 
-            # Translate data types for CREATE TABLE statements (best-effort)
             exec_command = command
             if command.upper().lstrip().startswith('CREATE TABLE'):
                 exec_command = translate_postgres_to_mysql(command)
@@ -83,14 +85,10 @@ def execute_sql_from_file(filepath: str):
                 logging.info(f"[{idx}/{len(sql_commands)}] Executing: {exec_command[:200]}...")
                 cursor.execute(exec_command)
             except Exception as e:
-                # Log full command and traceback so you can debug SQL issues
                 logging.error(f"[{idx}/{len(sql_commands)}] Failed to execute command (first 300 chars): {exec_command[:300]}")
                 logging.error(f"Error: {e}")
                 logging.error(traceback.format_exc())
-                # Continue to next statement rather than stopping (you can raise here if you prefer)
-                # raise
 
-        # Commit after all statements attempted
         try:
             conn.commit()
             logging.info("✅ All commands executed successfully and committed.")
@@ -102,7 +100,6 @@ def execute_sql_from_file(filepath: str):
         logging.error(f"An unexpected error occurred while executing SQL commands: {e_outer}")
         logging.error(traceback.format_exc())
     finally:
-        # Close cursor and connection robustly across drivers
         try:
             if cursor:
                 cursor.close()
@@ -118,3 +115,11 @@ def execute_sql_from_file(filepath: str):
         except Exception as e:
             logging.warning(f"Error closing connection: {e}")
             logging.warning(traceback.format_exc())
+
+
+if __name__ == "__main__":
+    # 🔧 Hardcoded path for testing
+    sql_file_path = r"../Run_Space/Test_Runner/create_schema.sql"
+
+    logging.info(f"Testing SQL execution from file: {sql_file_path}")
+    execute_sql_from_file(sql_file_path)

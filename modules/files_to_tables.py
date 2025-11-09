@@ -2,8 +2,10 @@ import os
 import re
 import json
 import sys
+import time 
+import stat
+import logging
 from .api_Call import api_call
-
 def strip_triple_backticks(s: str) -> str:
     """Remove leading ```[python] and trailing ``` if present, otherwise return original."""
     if not isinstance(s, str):
@@ -15,22 +17,13 @@ def table_converter(files_path, plantUML_path, metadata_path, output_path, max_e
     Generate a table-conversion Python script by sending the raw PlantUML text
     and the metadata JSON directly to the LLM with minimal preprocessing.
 
-    Behavior:
-      - Lists CSV filenames in files_path (top-level only) and includes that list in the prompt.
-      - Reads the raw PlantUML file contents (if present) and embeds them directly in the prompt.
-      - Reads the raw metadata JSON (if present) and embeds it directly in the prompt.
-      - Asks the LLM to produce a single self-contained Python script named
-        `generated_table_converter.py` which:
-          * reads CSVs from FILES_DIR,
-          * infers/matches CSVs to PlantUML table/entity names using the embedded PlantUML + metadata,
-          * performs light normalization (numeric/date casting, nullable handling) guided by metadata,
-          * writes normalized CSVs into an `output_tables` subdirectory inside OUTPUT_DIR,
-          * logs progress and raises on fatal errors.
-      - Saves the LLM output as output_path/generated_table_converter.py and returns that path.
-
-    This version intentionally performs minimal preprocessing: it does NOT try to guess mappings itself;
-    it simply lists filenames and hands the PlantUML + metadata to the LLM to use as the authoritative source.
+    Important behavior change: this function will send the PlantUML text and
+    the metadata JSON **to the LLM for context**, and instruct the LLM to
+    produce a Python script that **does not read** the PlantUML or metadata at
+    runtime. Instead the generated script must embed (hard-code) the mapping/schema
+    derived from the provided PlantUML + metadata so it can run independently.
     """
+
     files_path = os.path.abspath(files_path)
     output_path = os.path.abspath(output_path)
 
@@ -70,38 +63,70 @@ def table_converter(files_path, plantUML_path, metadata_path, output_path, max_e
         except Exception as e:
             metadata_text = f"<<ERROR reading metadata: {e}>>"
 
-    # Build a concise prompt that hands raw PlantUML and metadata to the model
-    prompt_lines = [
-        "Generate a single self-contained Python 3 script file named 'generated_table_converter.py'.",
-        "The script will perform these tasks when run locally:",
-        "  1) Read all CSV files from FILES_DIR (top-level only).",
-        "  2) Use the provided PlantUML text and metadata JSON (both embedded below) to map/rename CSV files to the target table names in the PlantUML diagram. The PlantUML is authoritative about desired table/entity names and relationships; use metadata to guide datatype/nullable inference.",
-        "  3) Perform light normalization: coerce numeric-looking columns to numeric types where safe, parse date-like strings to ISO dates, handle empty strings as NULLs for nullable columns per metadata, trim whitespace, and ensure output CSVs use UTF-8.",
-        "  4) Write the normalized CSVs into an `output_tables` subdirectory inside OUTPUT_DIR, using the target table names from PlantUML as filenames (e.g., customers_dimension.csv).",
-        "  5) Log progress and errors to stdout. Exit with non-zero status on fatal errors.",
-        "",
-        "Constraints for the generated script:",
-        "- Single file only; runnable as: `python generated_table_converter.py`.",
-        "- The script should accept (via top-of-file constants or argparse): FILES_DIR, OUTPUT_DIR, METADATA_PATH (optional).",
-        "- Allowed third-party dependency: pandas (import pandas as pd). If pandas is not installed, print a helpful message and exit.",
-        "- Do not make any network calls. Do not call external APIs.",
-        "- Be defensive: check file existence, create output dir, handle empty or malformed CSVs gracefully.",
-        "",
-        "Inputs the script should be aware of (embed exactly as shown):",
-        f"- CSV filenames (FILES_DIR top-level): {csv_files}",
-        f"- PlantUML text (embed below):\n----BEGIN_PLANTUML----\n{plantuml_text or '<NO_PLANTUML_PROVIDED>'}\n----END_PLANTUML----",
-        f"- Metadata JSON (embed below):\n----BEGIN_METADATA----\n{metadata_text or '<NO_METADATA_PROVIDED>'}\n----END_METADATA----",
-        "",
-        "Important: Use the PlantUML text to identify target table/entity names and structure. If a CSV filename clearly matches a PlantUML table name, use that mapping. If matching is ambiguous, implement sensible heuristics (filename tokens, singular/plural variations) and log the chosen mapping so a human can review output.",
-        "",
-        "Return ONLY the raw Python script content (no comments about the response)."
-    ]
-    prompt = "\n".join(prompt_lines)
+    # Build a single prompt string. IMPORTANT: explicitly instruct the LLM that the generated
+    # script MUST NOT read the PlantUML or metadata files at runtime — it should hardcode
+    # the inferred mapping/schema based on the provided PlantUML + metadata content embedded here.
+    prompt = f"""Generate a single self-contained Python 3 script file named 'generated_table_converter.py'.
+
+The script must perform the following tasks when run locally:
+
+1. Read all CSV files from the same directory where this file will be saved. 
+2. Use the mapping/schema inferred from the PlantUML text and metadata JSON (both embedded below) to:
+   - Identify target table/entity names as defined in the PlantUML diagram.
+   - Determine which columns belong to each table based on the PlantUML and metadata.
+   - Map and rename the existing CSV files to the correct table names.
+   IMPORTANT: **The generated script must NOT read the PlantUML file or the metadata JSON at runtime**.
+   Instead, it must embed (hard-code) the mapping/schema derived from the PlantUML and metadata inside the generated Python file
+   so that it can run without accessing those source files.
+
+3. Create new CSV files named exactly as per the tables/entities defined in the PlantUML file.
+4. Populate each new CSV with only the required columns based on the constraints from the PlantUML and metadata.
+   - Use metadata for datatypes, nullable constraints, and default values where available.
+   - If a column is missing in the source file but required by the PlantUML schema, create it as empty or NULL (as appropriate).
+5. Write the new CSV files in the same directory where the original files are located (i.e., create the new files next to the originals).
+6. After successfully creating all new files, delete the original CSV files that were used as inputs.
+7. Log all major operations (file reads, transformations, deletions) to stdout, and exit with a non-zero status on fatal errors.
+8. A single file can have mutliple tables/entities if the PlantUML indicates so; split accordingly.
+9. The produced script will be run in the backend using another script, so ensure it is standalone and does not require any user interaction.
+10. The file are present in the same directory as the generated script.
+11. The script should Strictly NOT accept (via argparse or top-of-file constants). The Files directory is the same as the directory where the script is located.
+12. Constraints like PK and FK are for reference but the concept of duplicates , null values etc must be handled as per the PUML constraints for the columns. Every table that is being split need not have all the rows from the source file. Only the relevant rows and columns as per the PUML constraints must be present in the split files.
+
+Constraints for the generated script:
+- Must be a single standalone Python file, runnable as: python generated_table_converter.py
+- Allowed third-party dependency: pandas (import pandas as pd). If pandas is not installed, print a clear installation message and exit.
+- No network calls or API requests are allowed.
+- Must be defensive: check file existence, create directories if needed, and handle empty or malformed CSVs gracefully.
+- Always overwrite existing files if they already exist.
+- The generated script must contain the inferred mapping/schema (hard-coded structures such as dicts/lists) derived from the PlantUML and metadata embedded below; it must not attempt to open or parse the PlantUML or metadata files at runtime.
+
+Inputs provided for context (embed exactly as shown):
+- CSV filenames (FILES_DIR top-level): {csv_files}
+
+- PlantUML text (embed below):
+----BEGIN_PLANTUML----
+{plantuml_text or '<NO_PLANTUML_PROVIDED>'}
+----END_PLANTUML----
+
+- Metadata JSON (embed below):
+----BEGIN_METADATA----
+{metadata_text or '<NO_METADATA_PROVIDED>'}
+----END_METADATA----
+
+Important guidance for the LLM:
+- Use the PlantUML text as the authoritative source for table/entity names and relationships.
+- Use the metadata JSON to determine columns, datatypes, nullability, and any hints about which CSV contains which data.
+- Where mapping from CSV filename -> table is ambiguous, implement sensible heuristics (substring matches, singular/plural, tokens) and include a clear, human-readable mapping dict in the generated script so operators can review/modify it.
+- The generated script must operate only on the CSVs in FILES_DIR; it must not perform any network I/O or read external files beyond the CSVs it processes.
+- Return ONLY the raw Python script content (no markdown, no explanation)."""
 
     # Call the api to generate the script
     try:
         llm_response = api_call(prompt)
-        llm_response = strip_triple_backticks(llm_response)
+        # strip wrapping triple backticks or ```python fences if present
+        if isinstance(llm_response, str):
+            llm_response = re.sub(r'^\s*```(?:python)?\s*', '', llm_response, flags=re.IGNORECASE)
+            llm_response = re.sub(r'\s*```\s*$', '', llm_response, flags=re.IGNORECASE)
         if not llm_response or not isinstance(llm_response, str):
             raise RuntimeError("api_call returned no script text")
     except Exception as e:
@@ -111,8 +136,15 @@ def table_converter(files_path, plantUML_path, metadata_path, output_path, max_e
     out_file = os.path.join(output_path, "generated_table_converter.py")
     with open(out_file, "w", encoding="utf-8") as outf:
         outf.write(llm_response)
+    time.sleep(0.05)
 
+    try:
+        os.chmod(out_file, stat.S_IRUSR | stat.S_IWUSR | stat.S_IRGRP | stat.S_IROTH)
+        logging.info(f"[WRITE] Set permissive chmod for {out_file}")
+    except Exception as e:
+        logging.debug(f"[WRITE] chmod failed for {out_file}: {e}")
     return out_file
+
 if __name__ == "__main__":
     # Adjust this path if you move the file
     BASE_DIR = '../'

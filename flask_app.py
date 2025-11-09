@@ -38,6 +38,8 @@ try:
     from modules.sql_Insert_Generator import generate_insert_script
     from modules.sql_Create_Writer import generate_create_sql_writer_script
     from modules.execute_sql_script import execute_sql_from_file
+    from modules.insert_Push_data import load_csvs_into_db
+    from modules.files_to_tables import table_converter
     from modules.script_Runner import run_python_code
     from modules.data_Fetch import fetch_from_dynamodb, fetch_from_s3, fetch_from_cosmosdb
     print("[INIT] All module imports successful.")
@@ -404,6 +406,7 @@ def continue_pipeline(task_id):
 
         # Execute the script (it should write create_schema.sql in the same run space)
         result = run_python_code(python_code, run_space_dir=task_dir)
+        time.sleep(0.05)
         add_log(task_id, "CREATE script generated and ready for execution. Awaiting user approval to create tables.", role="assistant")
         # mark awaiting approval in task state (this will be visible to frontend via /status)
         tasks[task_id]['awaiting_approval'] = 'create'
@@ -489,44 +492,40 @@ def continue_pipeline(task_id):
 
 
 
-        #------> sql Code Execution block starts here <------
+        
 
-        set_task_status(task_id, "Generating INSERT script...")
-        print("[STEP 10] Generating INSERT script...")
-        generate_insert_script(
-            metadata_file=get_path("metadata.json"),
-            plantuml_file=get_path("relationship_schema.puml"),
-            output_file=get_path("insert_Data_Script.py")
+        set_task_status(task_id, "Splitting Files into required Tables...")
+        print("[STEP 10] Generating Splitting Files into required Tables script...")
+
+        table_converter(
+            files_path=task_dir,
+            metadata_path=get_path("metadata.json"),
+            plantUML_path=get_path("relationship_schema.puml"),
+            output_path=get_path("generated_table_converter.py")
         )
-        output_path = os.path.join(app.config['UPLOAD_FOLDER'], task_id, "insert_Data_Script.py")
+
+        output_path = os.path.join(app.config['UPLOAD_FOLDER'], task_id, "generated_table_converter.py")
 
         add_log(task_id, "✅ INSERT script generated.")
 
-                # --- PAUSE FOR INSERT APPROVAL ---
-        print("[STEP 11] INSERT script generated and ready. Pausing for user approval before executing inserts.")
-        add_log(task_id, "INSERT script generated and ready for execution. Awaiting user approval to insert data.", role="assistant")
-        tasks[task_id]['awaiting_approval'] = 'insert'
-        set_task_status(task_id, "Awaiting approval: insert_data")
+        print("[STEP 11] INSERT script generated. Executing immediately (approval skipped).")
+        add_log(task_id, "INSERT script generated and automatically executing insert data.", role="assistant")
 
-        evt = threading.Event()
-        approval_events[task_id] = evt
-
-        # wait for approval
-        evt.wait()
-
-        # cleanup awaiting flag and continue
-        tasks[task_id].pop('awaiting_approval', None)
         set_task_status(task_id, "Inserting data...")
-        print("[STEP 11] User approved. Executing INSERT script now...")
 
-        with open(output_path,"r", encoding="utf-8") as f:
+        with open(output_path, "r", encoding="utf-8") as f:
             python_code = f.read()
+
         # Execute the script, ensuring it runs within its own directory
         result = run_python_code(python_code, run_space_dir=task_dir)
+        
         if result and result.get('returncode', 1) != 0:
             raise Exception(result['stderr'])
+        add_log(task_id, "✅ Data Splitting Complete.")
+        set_task_status(task_id, "Inserting data into tables...")
+        print("[STEP 12] Inserting data into tables now...")
+        load_csvs_into_db(task_dir)
         add_log(task_id, "✅ Data inserted.")
-
         set_task_status(task_id, "Completed")
         print(f"[COMPLETE] Task {task_id[:8]} finished successfully.")
         add_log(task_id, "🎉 Pipeline completed successfully!")
