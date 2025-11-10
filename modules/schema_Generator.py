@@ -53,7 +53,7 @@ Output Requirements:
    - Start with `@startuml` and end with `@enduml`
    - Use standard ER notation.
    - Label primary keys as <<PK>> and foreign keys as <<FK>>.
-   - Explicitly show cardinalities (1--N, 1--1, N--N).
+   - Explicitly show cardinalities (1--N, 1--1).
 4. Follow 3NF design principles — avoid redundancy and ensure dependency preservation.
 5. If there is a common column with same name between tables with the same context then there needs to be a relationship between the tables.
 Important:

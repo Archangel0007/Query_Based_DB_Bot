@@ -133,17 +133,18 @@ Important guidance for the LLM:
         raise RuntimeError(f"Failed to generate converter script via api_call: {e}")
 
     # Save the generated script
-    out_file = os.path.join(output_path, "generated_table_converter.py")
-    with open(out_file, "w", encoding="utf-8") as outf:
+    
+    with open(output_path, "w", encoding="utf-8") as outf:
         outf.write(llm_response)
     time.sleep(0.05)
 
     try:
-        os.chmod(out_file, stat.S_IRUSR | stat.S_IWUSR | stat.S_IRGRP | stat.S_IROTH)
-        logging.info(f"[WRITE] Set permissive chmod for {out_file}")
+        os.chmod(output_path, stat.S_IRUSR | stat.S_IWUSR | stat.S_IRGRP | stat.S_IROTH)
+        os.chmod(output_path, 0o666)
+        logging.info(f"[WRITE] Set permissive chmod for {output_path}")
     except Exception as e:
-        logging.debug(f"[WRITE] chmod failed for {out_file}: {e}")
-    return out_file
+        logging.debug(f"[WRITE] chmod failed for {output_path}: {e}")
+    return output_path
 
 if __name__ == "__main__":
     # Adjust this path if you move the file

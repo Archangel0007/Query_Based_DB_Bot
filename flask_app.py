@@ -497,7 +497,7 @@ def continue_pipeline(task_id):
         set_task_status(task_id, "Splitting Files into required Tables...")
         print("[STEP 10] Generating Splitting Files into required Tables script...")
 
-        table_converter(
+        output_path = table_converter(
             files_path=task_dir,
             metadata_path=get_path("metadata.json"),
             plantUML_path=get_path("relationship_schema.puml"),
@@ -512,7 +512,7 @@ def continue_pipeline(task_id):
         add_log(task_id, "INSERT script generated and automatically executing insert data.", role="assistant")
 
         set_task_status(task_id, "Inserting data...")
-
+#---> Smoked some BS here (need to check and change back later)
         with open(output_path, "r", encoding="utf-8") as f:
             python_code = f.read()
 
