@@ -6,6 +6,65 @@ import time
 import stat
 import logging
 from .api_Call import api_call
+
+import os
+import stat
+import time
+import logging
+from datetime import datetime
+import tempfile
+import shutil
+
+def write_text_safely(output_path: str, content: str) -> str:
+    """
+    Safely writes text to the specified output_path.
+    - Ensures parent directory exists.
+    - If a directory already exists at output_path, renames it (adds timestamp) instead of failing.
+    - Writes to a temporary file then atomically renames to output_path.
+    - Sets permissive chmod at the end.
+    """
+    logging.info(f"[WRITE] Preparing to write file: {output_path}")
+
+    parent_dir = os.path.dirname(output_path) or "."
+    os.makedirs(parent_dir, exist_ok=True)
+
+    # If output_path already exists and is a directory → rename it safely
+    if os.path.exists(output_path) and os.path.isdir(output_path):
+        backup_dir = output_path + "_bak_" + datetime.utcnow().strftime("%Y%m%dT%H%M%S")
+        logging.warning(f"[WRITE] '{output_path}' is a directory — renaming to '{backup_dir}'")
+        os.rename(output_path, backup_dir)
+
+    # Write atomically via a temp file in the same directory
+    fd, tmp_path = tempfile.mkstemp(dir=parent_dir, prefix=".tmp_write_", text=True)
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as tmpf:
+            tmpf.write(content)
+            tmpf.flush()
+            os.fsync(tmpf.fileno())
+        # Replace existing file if any
+        if os.path.exists(output_path) and os.path.isfile(output_path):
+            os.remove(output_path)
+        shutil.move(tmp_path, output_path)
+    finally:
+        # Clean up temp if still present
+        if os.path.exists(tmp_path):
+            try:
+                os.remove(tmp_path)
+            except Exception:
+                pass
+
+    # Apply permissive file mode (best effort)
+    try:
+        os.chmod(output_path, stat.S_IRUSR | stat.S_IWUSR | stat.S_IRGRP | stat.S_IROTH)  # 0o644
+        os.chmod(output_path, 0o666)
+        logging.info(f"[WRITE] Set permissive chmod for {output_path}")
+    except Exception as e:
+        logging.debug(f"[WRITE] chmod failed for {output_path}: {e}")
+
+    time.sleep(0.05)
+    logging.info(f"[WRITE] Successfully wrote file to {output_path}")
+    return output_path
+
 def strip_triple_backticks(s: str) -> str:
     """Remove leading ```[python] and trailing ``` if present, otherwise return original."""
     if not isinstance(s, str):
@@ -84,13 +143,13 @@ The script must perform the following tasks when run locally:
    - Use metadata for datatypes, nullable constraints, and default values where available.
    - If a column is missing in the source file but required by the PlantUML schema, create it as empty or NULL (as appropriate).
 5. Write the new CSV files in the same directory where the original files are located (i.e., create the new files next to the originals).
-6. After successfully creating all new files, delete the original CSV files that were used as inputs.
-7. Log all major operations (file reads, transformations, deletions) to stdout, and exit with a non-zero status on fatal errors.
-8. A single file can have mutliple tables/entities if the PlantUML indicates so; split accordingly.
-9. The produced script will be run in the backend using another script, so ensure it is standalone and does not require any user interaction.
-10. The file are present in the same directory as the generated script.
-11. The script should Strictly NOT accept (via argparse or top-of-file constants). The Files directory is the same as the directory where the script is located.
-12. Constraints like PK and FK are for reference but the concept of duplicates , null values etc must be handled as per the PUML constraints for the columns. Every table that is being split need not have all the rows from the source file. Only the relevant rows and columns as per the PUML constraints must be present in the split files.
+6.Log all major operations (file reads, transformations, deletions) to stdout, and exit with a non-zero status on fatal errors.
+7. A single file can have mutliple tables/entities if the PlantUML indicates so; split accordingly.
+8. The produced script will be run in the backend using another script, so ensure it is standalone and does not require any user interaction.
+9. The file are present in the same directory as the generated script.
+10. The script should Strictly NOT accept (via argparse or top-of-file constants). The Files directory is the same as the directory where the script is located.
+11. Constraints like PK and FK are for reference but the concept of duplicates , null values etc must be handled as per the PUML coINSERT INTO employee_territories (employee_id, territory_id)
+VALUES (employee_id:int, territory_id:int);nstraints for the columns. Every table that is being split need not have all the rows from the source file. Only the relevant rows and columns as per the PUML constraints must be present in the split files.
 
 Constraints for the generated script:
 - Must be a single standalone Python file, runnable as: python generated_table_converter.py
@@ -132,18 +191,7 @@ Important guidance for the LLM:
     except Exception as e:
         raise RuntimeError(f"Failed to generate converter script via api_call: {e}")
 
-    # Save the generated script
-    
-    with open(output_path, "w", encoding="utf-8") as outf:
-        outf.write(llm_response)
-    time.sleep(0.05)
-
-    try:
-        os.chmod(output_path, stat.S_IRUSR | stat.S_IWUSR | stat.S_IRGRP | stat.S_IROTH)
-        os.chmod(output_path, 0o666)
-        logging.info(f"[WRITE] Set permissive chmod for {output_path}")
-    except Exception as e:
-        logging.debug(f"[WRITE] chmod failed for {output_path}: {e}")
+    output_path = write_text_safely(output_path, llm_response)
     return output_path
 
 if __name__ == "__main__":

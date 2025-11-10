@@ -1,0 +1,16 @@
+{
+    "sqltools.connections": [
+        {
+            "mysqlOptions": {
+                "authProtocol": "default",
+                "enableSsl": "Disabled"
+            },
+            "ssh": "Disabled",
+            "previewLimit": 50,
+            "server": "metro.proxy.rlwy.net",
+            "driver": "MySQL",
+            "name": "Smart_Data_Crafter",
+            "connectString": "mysql+pymysql://root:NwrMwVHJoQkwvoEqYHNdupOzolbwBSDo@metro.proxy.rlwy.net:16519/railway"
+        }
+    ]
+}

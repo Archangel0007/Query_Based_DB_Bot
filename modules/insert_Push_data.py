@@ -9,16 +9,14 @@ Key features:
 - Robust schema discovery (information_schema / DESCRIBE).
 - Optionally fills missing non-nullable fields with defaults (--fill_defaults).
 - Deduplicates by primary key per batch and uses ON DUPLICATE KEY UPDATE to avoid 1062 errors.
-- Loads dimension tables first (files starting with 'Dim'), then others.
+- Loads tables in the order derived from a create_schema.sql file (topological order).
 - Optionally disables foreign key checks during load (--disable_fk_checks).
 - Writes skipped rows to `<csv_filename>.skipped.csv` for manual inspection.
 - Produces a summary dict printed at end.
 
 Usage:
-    python -m modules.insert_Push_data --dir ./Run_Space/Test_Runner --fill_defaults --disable_fk_checks
-
+    python -m modules.insert_Push_data --dir ./Run_Space/Test_Runner --fill_defaults --disable_fk_checks --schema ../Run_Space/<task_id>/create_schema.sql
 """
-
 import os
 import sys
 import argparse
@@ -26,8 +24,9 @@ import logging
 import math
 import time
 import traceback
+import re
 from typing import List, Tuple, Set, Dict, Any, Optional
-from datetime import datetime, date
+from datetime import datetime
 
 import pandas as pd
 import mysql.connector
@@ -37,7 +36,6 @@ from mysql.connector import Error
 from db_utils import get_db_connection
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
-
 
 # -------------------------
 # Schema helpers
@@ -98,7 +96,6 @@ def get_table_columns_info(cursor, table_name: str) -> Tuple[List[str], Set[str]
 
     return [], set(), {}
 
-
 def get_table_primary_key_columns(cursor, table_name: str) -> List[str]:
     """
     Returns list of primary key columns for the table (order not critical).
@@ -112,7 +109,6 @@ def get_table_primary_key_columns(cursor, table_name: str) -> List[str]:
             try:
                 col = r[4]
             except Exception:
-                # fallback if dict-like
                 try:
                     col = r.get("Column_name")
                 except Exception:
@@ -124,7 +120,6 @@ def get_table_primary_key_columns(cursor, table_name: str) -> List[str]:
         logging.debug("get_table_primary_key_columns failed: %s", traceback.format_exc())
         return []
 
-
 # -------------------------
 # Utilities for defaults
 # -------------------------
@@ -134,20 +129,17 @@ def is_numeric_type(col_type: str) -> bool:
     t = col_type.lower()
     return any(x in t for x in ("int", "decimal", "numeric", "float", "double", "real", "tinyint", "smallint", "mediumint", "bigint"))
 
-
 def is_text_type(col_type: str) -> bool:
     if not col_type:
         return True
     t = col_type.lower()
     return any(x in t for x in ("char", "text", "varchar", "blob", "enum", "set"))
 
-
 def is_date_type(col_type: str) -> bool:
     if not col_type:
         return False
     t = col_type.lower()
     return any(x in t for x in ("date", "time", "timestamp", "datetime", "year"))
-
 
 def default_for_column(col_name: str, col_type: str) -> Any:
     """Return a sensible default for the column type."""
@@ -158,7 +150,6 @@ def default_for_column(col_name: str, col_type: str) -> Any:
         return datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S")
     # default: short sentinel string
     return "UNKNOWN"
-
 
 # -------------------------
 # Insert helpers
@@ -183,7 +174,6 @@ def dedupe_rows_by_pk(rows: List[Tuple], col_names: List[str], pk_cols: List[str
         seen.add(key)
         out.append(r)
     return out
-
 
 def insert_rows(conn, cursor, table_name: str, table_columns: List[str], rows: List[Tuple[Any, ...]],
                 pk_cols: List[str], col_type_map: Dict[str, str], batch_size: int = 500) -> Dict[str, Any]:
@@ -250,6 +240,70 @@ def insert_rows(conn, cursor, table_name: str, table_columns: List[str], rows: L
 
     return {"inserted": inserted, "skipped": skipped, "error": error_text}
 
+# -------------------------
+# Schema file parsing (new)
+# -------------------------
+def find_schema_file(default_dir: str) -> Optional[str]:
+    """
+    Attempt to locate a create_schema.sql file under default_dir (e.g. ../Run_Space).
+    Logic:
+      - if default_dir is a file and exists -> return it
+      - else look for subdirectories containing create_schema.sql; if exactly one found -> return it
+      - if many found -> pick the most recently modified create_schema.sql
+      - if none found -> return None
+    """
+    if not os.path.exists(default_dir):
+        return None
+    # if default_dir points directly to a file, return it
+    if os.path.isfile(default_dir) and os.path.basename(default_dir).lower().endswith(".sql"):
+        return os.path.abspath(default_dir)
+
+    candidates = []
+    # search one level deep for create_schema.sql
+    for entry in sorted(os.listdir(default_dir)):
+        p = os.path.join(default_dir, entry)
+        if os.path.isdir(p):
+            candidate = os.path.join(p, "create_schema.sql")
+            if os.path.isfile(candidate):
+                candidates.append(candidate)
+    # also check the directory itself for create_schema.sql
+    top_level = os.path.join(default_dir, "create_schema.sql")
+    if os.path.isfile(top_level):
+        candidates.append(top_level)
+
+    if not candidates:
+        return None
+    if len(candidates) == 1:
+        return os.path.abspath(candidates[0])
+    # choose most recently modified
+    candidates.sort(key=lambda p: os.path.getmtime(p), reverse=True)
+    return os.path.abspath(candidates[0])
+
+def parse_create_schema(schema_path: str) -> List[str]:
+    """
+    Parse the create_schema.sql and return a list of table names in the order of CREATE TABLE statements.
+    This is intentionally simple and robust for common MySQL CREATE TABLE lines.
+    """
+    if not schema_path or not os.path.isfile(schema_path):
+        return []
+    create_re = re.compile(
+        r'CREATE\s+TABLE\s+(?:IF\s+NOT\s+EXISTS\s+)?`?([A-Za-z0-9_]+)`?\s*\(',
+        re.IGNORECASE
+    )
+    table_order = []
+    try:
+        with open(schema_path, "r", encoding="utf-8") as f:
+            for line in f:
+                # strip single-line comments and leading spaces
+                s = line.strip()
+                # skip lines that begin with DROP TABLE ... CASCADE; or comments
+                m = create_re.search(s)
+                if m:
+                    name = m.group(1)
+                    table_order.append(name)
+    except Exception:
+        logging.debug("Failed to parse schema file %s: %s", schema_path, traceback.format_exc())
+    return table_order
 
 # -------------------------
 # CSV loading core
@@ -283,12 +337,12 @@ def _resolve_directory_arg(directory: str) -> str:
         f"Directory not found. Tried: cwd={cwd_candidate}, project_root={root_candidate}, alt={alt_candidate}"
     )
 
-
 def load_csvs_into_db(directory: str,
                       fill_defaults: bool = False,
                       disable_fk_checks: bool = False,
                       batch_size: int = 1000,
-                      skip_missing_table: bool = False) -> Dict[str, Any]:
+                      skip_missing_table: bool = False,
+                      schema_path: Optional[str] = None) -> Dict[str, Any]:
     """
     Main entry: load CSVs (top-level) in directory to DB.
     Returns summary mapping filename -> { inserted, skipped, error }.
@@ -296,16 +350,63 @@ def load_csvs_into_db(directory: str,
     directory = _resolve_directory_arg(directory)
     logging.info("Resolved target directory: %s", directory)
 
+    # discover CSV files
     csv_files = sorted([f for f in os.listdir(directory) if f.lower().endswith(".csv")])
     if not csv_files:
         logging.warning("No CSV files found in %s", directory)
         return {}
 
-    # prefer dimension tables first (filenames starting with 'Dim' or 'dim')
+    # discover schema file if not provided
+    if schema_path:
+        schema_file = schema_path if os.path.isabs(schema_path) else os.path.abspath(os.path.join(os.getcwd(), schema_path))
+        if not os.path.isfile(schema_file):
+            logging.warning("Provided schema path not found: %s. Attempting auto-discovery under ../Run_Space", schema_path)
+            schema_file = None
+    else:
+        # default location: ../Run_Space relative to this module file
+        default_run_space = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "Run_Space"))
+        schema_file = find_schema_file(default_run_space)
+
+    if schema_file:
+        logging.info("Using schema file: %s", schema_file)
+        schema_table_order = parse_create_schema(schema_file)
+        logging.info("Parsed %d tables from schema.", len(schema_table_order))
+    else:
+        logging.info("No schema file found/used; will fall back to default load order.")
+        schema_table_order = []
+
+    # Map CSV filenames to table names (filename without .csv)
+    csv_to_table = {csv: os.path.splitext(csv)[0] for csv in csv_files}
+
+    # Build ordered file list:
+    ordered_files = []
+    added = set()
+
+    # 1) If schema_table_order present, add files matching that order first
+    if schema_table_order:
+        for t in schema_table_order:
+            # find matching csv (case-insensitive)
+            matches = [csv for csv, tbl in csv_to_table.items() if tbl.lower() == t.lower()]
+            if matches:
+                # if multiple matches pick all (shouldn't happen)
+                for m in matches:
+                    ordered_files.append(m)
+                    added.add(m)
+
+    # 2) Add any CSVs that start with "Dim" but weren't in schema (keep initial behavior)
     dims = [f for f in csv_files if os.path.splitext(f)[0].lower().startswith("dim")]
-    others = [f for f in csv_files if f not in dims]
-    ordered_files = dims + others
-    logging.info("Found %d CSV files. Will process in this order: %s", len(csv_files), ordered_files)
+    for d in dims:
+        if d not in added:
+            ordered_files.append(d)
+            added.add(d)
+
+    # 3) Add remaining CSVs in alphabetical order
+    for f in csv_files:
+        if f not in added:
+            ordered_files.append(f)
+            added.add(f)
+
+    logging.info("Will process files in this order: %s", ordered_files)
 
     summary: Dict[str, Dict[str, Any]] = {}
 
@@ -338,7 +439,7 @@ def load_csvs_into_db(directory: str,
         table_name = os.path.splitext(csv_file)[0]
         logging.info("Processing file '%s' -> table '%s'", csv_file, table_name)
         summary_entry = {"inserted": 0, "skipped": 0, "error": None}
-        skipped_rows_preview = []
+        skipped_rows_details = []
 
         # read csv into dataframe (all as string first)
         try:
@@ -393,7 +494,6 @@ def load_csvs_into_db(directory: str,
         # align CSV columns to table columns and prepare rows (tuples)
         rows_to_insert: List[Tuple[Any, ...]] = []
         skipped_count = 0
-        skipped_rows_details: List[Dict[str, Any]] = []
 
         for idx, row in enumerate(df.itertuples(index=False, name=None), start=1):
             row_map = dict(zip(df.columns, row))
@@ -502,7 +602,6 @@ def load_csvs_into_db(directory: str,
 
     return summary
 
-
 # -------------------------
 # CLI
 # -------------------------
@@ -513,8 +612,8 @@ def parse_args(argv: Optional[List[str]] = None):
     p.add_argument("--fill_defaults", action="store_true", help="Auto-fill missing non-nullable columns with defaults (strings->'UNKNOWN', numbers->0).")
     p.add_argument("--disable_fk_checks", action="store_true", help="Temporarily disable FOREIGN_KEY_CHECKS during load (use with caution).")
     p.add_argument("--skip_missing_table", action="store_true", help="Skip files with no matching table in DB instead of attempting fallback.")
+    p.add_argument("--schema", type=str, default=None, help="Path to create_schema.sql (overrides auto-discovery).")
     return p.parse_args(argv)
-
 
 def main(argv: Optional[List[str]] = None):
     args = parse_args(argv)
@@ -527,14 +626,14 @@ def main(argv: Optional[List[str]] = None):
                                   fill_defaults=args.fill_defaults,
                                   disable_fk_checks=args.disable_fk_checks,
                                   batch_size=args.batch_size,
-                                  skip_missing_table=args.skip_missing_table)
+                                  skip_missing_table=args.skip_missing_table,
+                                  schema_path=args.schema)
         logging.info("Load summary:")
         for fname, info in result.items():
             logging.info(" %s: %s", fname, info)
     except Exception as e:
         logging.exception("Fatal error during load: %s", e)
         sys.exit(2)
-
 
 if __name__ == "__main__":
     main()
