@@ -457,6 +457,17 @@ function getAssistantSnippet(assistantMsgDiv) {
     return joined.substring(0, 60); // first 60 chars as a fingerprint/snippet
 }
 
+// escape HTML to avoid injection when rendering table cell values
+function escapeHtml(str) {
+    if (str === null || str === undefined) return '';
+    return String(str)
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&#39;');
+}
+
 
 function showSchemaApprovalPrompt(schemaText) {
 
@@ -950,6 +961,86 @@ async function pollStatus() {
         }
     } catch (err) {
         console.warn('Error updating schema image:', err);
+    }
+
+    // ---------- Table preview + insert stats (render once) ----------
+    try {
+        if (data.table_preview && taskId) {
+            const previewId = `table-preview-${taskId}`;
+            // avoid re-rendering if already present
+            if (!document.getElementById(previewId)) {
+                const tp = data.table_preview;
+                // if the module returned an _error key, render it plainly
+                if (tp && tp._error) {
+                    addChatMessage('assistant', `<b>Table Preview Error:</b><br><pre>${tp._error}</pre>`);
+                } else {
+                    const containerHtmlParts = [];
+                    containerHtmlParts.push('<div id="' + previewId + '" style="max-height:360px; overflow:auto; border:1px solid #eee; padding:8px; border-radius:6px; background:#fff;">');
+                    containerHtmlParts.push('<b>Table Previews & Insert Stats</b>');
+                    containerHtmlParts.push('<div style="margin-top:8px;">');
+
+                    for (const tbl of Object.keys(tp)) {
+                        try {
+                            const entry = tp[tbl] || {};
+                            const preview = entry.preview || {};
+                            const stats = entry.insert_stats || {};
+
+                            containerHtmlParts.push(`<div style="margin:10px 0; padding:8px; border:1px solid #f0f0f0; border-radius:6px; background:#fafafa;
+                                box-shadow: 0 1px 2px rgba(0,0,0,0.03);">
+                                <div style="display:flex; justify-content:space-between; align-items:center;">
+                                    <div style="font-weight:600">${tbl}</div>
+                                    <div style="font-size:12px; color:#666">${stats.inserted_summary || ''}</div>
+                                </div>`);
+
+                            // Render columns header
+                            if (preview.columns && preview.columns.length) {
+                                containerHtmlParts.push('<div style="overflow:auto; margin-top:6px;">');
+                                // table container
+                                containerHtmlParts.push('<table style="border-collapse:collapse; width:100%; font-size:13px;">');
+                                // header
+                                containerHtmlParts.push('<thead><tr>');
+                                for (const col of preview.columns) {
+                                    containerHtmlParts.push(`<th style="text-align:left; padding:6px; border-bottom:1px solid #eee; background:#fff; font-weight:600">${col}</th>`);
+                                }
+                                containerHtmlParts.push('</tr></thead>');
+
+                                // rows (limit the number rendered to avoid huge DOM)
+                                containerHtmlParts.push('<tbody>');
+                                const rows = preview.rows || [];
+                                for (let r = 0; r < rows.length; r++) {
+                                    const row = rows[r];
+                                    containerHtmlParts.push('<tr>');
+                                    for (let c = 0; c < (preview.columns || []).length; c++) {
+                                        const cell = row[c] !== undefined && row[c] !== null ? String(row[c]) : '';
+                                        containerHtmlParts.push(`<td style="padding:6px; border-bottom:1px solid #f7f7f7; vertical-align:top">${escapeHtml(cell)}</td>`);
+                                    }
+                                    containerHtmlParts.push('</tr>');
+                                }
+                                containerHtmlParts.push('</tbody>');
+                                containerHtmlParts.push('</table>');
+                                containerHtmlParts.push('</div>');
+                            } else if (preview.error) {
+                                containerHtmlParts.push(`<div class="muted">Preview error: ${escapeHtml(preview.error)}</div>`);
+                            } else {
+                                containerHtmlParts.push('<div class="muted">No preview available.</div>');
+                            }
+
+                            containerHtmlParts.push('</div>');
+                            containerHtmlParts.push('</div>');
+                        } catch (eTbl) {
+                            console.warn('Error rendering table preview for', tbl, eTbl);
+                        }
+                    }
+
+                    containerHtmlParts.push('</div></div>');
+
+                    // append as an assistant chat message so it shows in the flow
+                    addChatMessage('assistant', containerHtmlParts.join(''));
+                }
+            }
+        }
+    } catch (err) {
+        console.warn('Error rendering table preview:', err);
     }
 
     

@@ -41,8 +41,7 @@ try:
     from modules.execute_sql_script import execute_sql_from_file
     from modules.insert_Push_data import load_csvs_into_db
     from modules.files_to_tables import table_converter
-    from modules.fetch_tables import fetch_tables_preview
-    from modules.insert_stats import get_insert_counts
+    from modules.fetch_tables import fetch_tables_with_insert_stats as _fetch_stats
     from modules.script_Runner import run_python_code
     from modules.data_Fetch import fetch_from_dynamodb, fetch_from_s3, fetch_from_cosmosdb
     print("[INIT] All module imports successful.")
@@ -499,6 +498,16 @@ def continue_pipeline(task_id):
         print("[STEP 12] Inserting data into tables now...")
         load_csvs_into_db(task_dir)
         add_log(task_id, "✅ Data inserted.")
+        # Provide a preview of DB tables and insert statistics for UI display
+        try:
+            add_log(task_id, "Generating table previews and insert statistics...")
+            table_preview = _fetch_stats(task_id, runspace_base=app.config['UPLOAD_FOLDER'], preview_limit=5)
+                # Store structured preview in task state for frontend rendering
+            tasks[task_id]['table_preview'] = table_preview
+            add_log(task_id, "✅ Table preview and insert stats available.")
+        except Exception:
+            # Never let preview-generation crash the pipeline
+            app.logger.exception('Unexpected error while generating table preview')
         set_task_status(task_id, "Completed")
         print(f"[COMPLETE] Task {task_id[:8]} finished successfully.")
         add_log(task_id, "🎉 Pipeline completed successfully!")
