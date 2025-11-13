@@ -198,14 +198,14 @@ def render_plantuml_to_png(puml_path, output_png_path):
     )
 
 def generate_schema(dimensional_model_path, output_puml_path, output_png_path, schema_context):
-    """Generates a PlantUML ER diagram from dimensional_model.json using Gemini API."""
+    """Generates a PlantUML ER diagram from dimensional_model.json using Openai API."""
     logger.info("🔍 Loading dimensional model...")
     dimensional_model = load_dimensional_model(dimensional_model_path)
 
     logger.info("✍️ Building prompt...")
     prompt = build_prompt(dimensional_model, schema_context)
 
-    logger.info("🤖 Calling Gemini model...")
+    logger.info("🤖 Calling Openai model...")
     result_text = api_call(prompt)
     if result_text.startswith("```plantuml"):
         result_text = result_text[11:-3].strip()
@@ -229,7 +229,7 @@ def generate_schema(dimensional_model_path, output_puml_path, output_png_path, s
         logger.info("✅ Schema generation complete.")
         return png_path, reasoning
     except (json.JSONDecodeError, ValueError) as e:
-        logger.error(f"❌ Failed to parse PlantUML from Gemini response: {e}. Saving raw output for debugging.")
+        logger.error(f"❌ Failed to parse PlantUML from Openai response: {e}. Saving raw output for debugging.")
         save_plantuml(result_text, out_path=output_puml_path + ".error.puml")
         raise
 
@@ -291,7 +291,7 @@ def schema_correction(user_input, puml_path, png_path):
             current_schema = f.read()
 
         prompt = build_correction_prompt(current_schema, correction_text)
-        logger.info("🤖 Calling Gemini model for schema correction...")
+        logger.info("🤖 Calling Openai model for schema correction...")
 
         corrected_text = api_call(prompt)
         save_plantuml(corrected_text, out_path=puml_path)

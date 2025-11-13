@@ -37,9 +37,12 @@ try:
     from modules.sql_Create_Generator import generate_create_script
     from modules.sql_Insert_Generator import generate_insert_script
     from modules.sql_Create_Writer import generate_create_sql_writer_script
+    from modules.reorder_create_sql import reorder_create_sql_file
     from modules.execute_sql_script import execute_sql_from_file
     from modules.insert_Push_data import load_csvs_into_db
     from modules.files_to_tables import table_converter
+    from modules.fetch_tables import fetch_tables_preview
+    from modules.insert_stats import get_insert_counts
     from modules.script_Runner import run_python_code
     from modules.data_Fetch import fetch_from_dynamodb, fetch_from_s3, fetch_from_cosmosdb
     print("[INIT] All module imports successful.")
@@ -112,6 +115,7 @@ class TaskLogHandler(logging.Handler):
 # Attach our handler to the root logger so library logs (and Flask/werkzeug) are captured.
 _task_log_handler = TaskLogHandler()
 logging.getLogger().addHandler(_task_log_handler)
+
 
 def generate_and_register_schema(task_id, schema_context, reasoning=None):
     """Generate a schema PUML + PNG and register the PNG in the task record.
@@ -406,6 +410,9 @@ def continue_pipeline(task_id):
 
         # Execute the script (it should write create_schema.sql in the same run space)
         result = run_python_code(python_code, run_space_dir=task_dir)
+        
+        time.sleep(0.15)
+        reorder_create_sql_file(get_path("create_schema.sql"),get_path("create_schema.sql"))
         time.sleep(0.05)
         add_log(task_id, "CREATE script generated and ready for execution. Awaiting user approval to create tables.", role="assistant")
         # mark awaiting approval in task state (this will be visible to frontend via /status)
@@ -413,12 +420,16 @@ def continue_pipeline(task_id):
         set_task_status(task_id, "Awaiting approval: create_tables")
         evt = threading.Event()
         approval_events[task_id] = evt
-
+        print('Before: ', tasks[task_id])
         # Wait until the front-end calls /approve_action/<task_id> and sets the event
         evt.wait()  # indefinite wait — user must approve to continue
-
+       
         # cleanup awaiting flag and continue
         tasks[task_id].pop('awaiting_approval', None)
+        # approval_events.pop(task_id, None)
+        approval_events.pop(task_id, None)
+        print('After: ', tasks[task_id])
+        
         set_task_status(task_id, "Creating tables...")
         print("[STEP 9] User approved. Executing CREATE script now...")
 
@@ -454,45 +465,7 @@ def continue_pipeline(task_id):
 
         # mark awaiting approval in task state (this will be visible to frontend via /status)
         tasks[task_id]['awaiting_approval'] = 'create'
-        set_task_status(task_id, "Awaiting approval: create_tables")
-        evt = threading.Event()
-        approval_events[task_id] = evt
-        def _wait_and_execute_create(task_id_local, evt_local, task_dir_local):
-            try:
-                print(f"[WAITER] waiting for approval for task {task_id_local}")
-                # Block in the background thread until approval is signaled
-                evt_local.wait()
-                print(f"[WAITER] approved {task_id_local}, executing CREATE script now...")
-                # Update task state
-                set_task_status(task_id_local, "Creating tables...")
-                # Ensure we compute the same path used elsewhere
-                sql_path = os.path.join(app.config['UPLOAD_FOLDER'], task_id_local, "create_schema.sql")
-                print(f"[WAITER] sql_path = {sql_path}, exists = {os.path.exists(sql_path)}")
-                if not os.path.exists(sql_path):
-                    add_log(task_id_local, f"❌ SQL file not found: {sql_path}")
-                    set_task_status(task_id_local, "Failed: create_tables")
-                    return
-
-                try:
-                    execute_sql_from_file(sql_path)
-                    add_log(task_id_local, "✅ Tables created.")
-                    set_task_status(task_id_local, "Completed: create_tables")
-                except Exception as exc:
-                    add_log(task_id_local, f"❌ Error executing SQL: {exc}")
-                    add_log(task_id_local, traceback.format_exc())
-                    set_task_status(task_id_local, "Failed: create_tables")
-            finally:
-                # cleanup awaiting flag and approval_events map entry
-                tasks.get(task_id_local, {}).pop('awaiting_approval', None)
-                approval_events.pop(task_id_local, None)
-                print(f"[WAITER] finished execution for task {task_id_local}")
-
-        # Launch the background waiter thread (daemon so it won't block server shutdown)
-        threading.Thread(target=_wait_and_execute_create, args=(task_id, evt, task_dir), daemon=True).start()
-
-
-
-        
+        set_task_status(task_id, "Awaiting approval: create_tables")   
 
         set_task_status(task_id, "Splitting Files into required Tables...")
         print("[STEP 10] Generating Splitting Files into required Tables script...")
@@ -897,6 +870,7 @@ def start_generation():
 
     # leave request; thread will capture subsequent background prints
     return jsonify({"task_id": task_id})
+
 @app.route('/approve_action/<task_id>', methods=['POST'])
 def approve_action(task_id):
     """
@@ -952,6 +926,8 @@ def approve_action(task_id):
 def task_status(task_id):
     print(f"[ROUTE] GET /status/{task_id[:8]}")
     task = tasks.get(task_id)
+    if task:
+        print('Task awaiting_approval: ', task.get('awaiting_approval'), ' Status: ',task.get('status'))
     if not task:
         print("[ERROR] Task not found.")
         return jsonify({"error": "Task not found"}), 404
@@ -1018,6 +994,7 @@ def submit_review(task_id):
         app.logger.exception("Error handling submit_review")
         return jsonify({"error": str(e)}), 500
     
+
 # -------------------- APP START --------------------
 if __name__ == '__main__':
     os.makedirs(app.config['UPLOAD_FOLDER'], exist_ok=True)

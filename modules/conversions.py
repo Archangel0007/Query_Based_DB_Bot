@@ -20,7 +20,7 @@ from dotenv import load_dotenv
 import argparse
 import sys
 
-# Optional Gemini client
+# Optional openai client
 try:
     from google import genai
     _HAS_GENAI = True
@@ -29,7 +29,7 @@ except Exception:
     _HAS_GENAI = False
 
 # ---------------- CONFIG ----------------
-DEFAULT_MODEL = "gemini-2.5-flash"
+DEFAULT_MODEL = "openai-2.5-flash"
 CHUNK_APPROX_SIZE = 3000
 CHUNK_OVERLAP = 250
 MAX_RETRIES = 4
@@ -47,7 +47,7 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(
 
 def convert_html_to_csv(url: str, output_dir: str = None) -> List[str]:
     """
-    Fetches HTML from a URL, converts it to Markdown, extracts structured data via LLM (Gemini),
+    Fetches HTML from a URL, converts it to Markdown, extracts structured data via LLM (openai),
     and saves the extracted schemas into CSV files.
 
     Args:
@@ -130,7 +130,7 @@ def convert_html_to_csv(url: str, output_dir: str = None) -> List[str]:
 
         def call_gemini_with_retry(prompt: str, model: str) -> str:
             if not client:
-                raise RuntimeError("Gemini client not configured or GEMINI_API_KEY missing.")
+                raise RuntimeError("openai client not configured or OPENAI_API_KEY missing.")
             attempt = 0
             while True:
                 attempt += 1

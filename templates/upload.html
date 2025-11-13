@@ -106,6 +106,8 @@
                 <div id="logs-panel" style="display:none; margin-top:8px;">
                     <div id="logs-container" style="max-height:240px; overflow:auto; border:1px solid var(--border-color); padding:8px; background:var(--panel-bg-color); border-radius:4px;"></div>
                 </div>
+                <!-- Script approval / view controls will be injected here when awaiting approval -->
+                <div id="script-approval" style="display:none; margin-top:10px;"></div>
             </div>
         </div>
     
@@ -172,9 +174,14 @@
     const azureCosmosDBInput = document.getElementById('azure_cosmosdb_input');
     const s3BucketInput = document.getElementById('s3_bucket_input');
 
-        let taskId = null;
-        let pollingInterval = null;
-        let scriptApprovalShown = false;
+    let taskId = null;
+    let pollingInterval = null;
+    let scriptApprovalShown = false;
+    // track approvals per-task so once the user approves we don't reshow the prompt
+    // key format: `${taskId}:${which}` where which is 'create' or 'insert'
+    let approvedActions = {};
+    // track tasks where any approval has been given; once true, don't prompt again for that task
+    let approvedTasks = {};
         window.schemaCorrectionOpen = window.schemaCorrectionOpen || false; // global flag used by prompts/polling
 
     function showSelectedMediumInput() {
@@ -337,6 +344,9 @@
             if (response.ok) {
                 const data = await response.json();
                 taskId = data.task_id;
+                // clear any previous approvals when starting a new task
+                approvedActions = {};
+                approvedTasks = {};
                 formContainer.style.display = 'none';
                 chatSection.style.display = 'block'; // Show chat after upload
                 // Move logs to sit beneath the chat container now that pipeline is running
@@ -449,12 +459,12 @@ function getAssistantSnippet(assistantMsgDiv) {
 
 
 function showSchemaApprovalPrompt(schemaText) {
-    // Guard to prevent multiple schema prompts from stacking
+
     if (window.schemaPromptActive || window.schemaCorrectionOpen) return;
     window.schemaPromptActive = true;
-        // guard: don't create duplicate schema prompt or create while correction UI open
+
     if (document.querySelector('#schema-ok-btn') || window.schemaCorrectionOpen) {
-        // either already shown, or user is editing a correction -> do nothing
+
         return;
     }
 
@@ -468,23 +478,33 @@ function showSchemaApprovalPrompt(schemaText) {
     `;
     const msgDiv = addChatMessage('assistant', msg);
 
-    // --- helper for retry-based feedback POST ---
     async function sendReviewWithRetries(action, details = '', attempt = 0) {
-        if (!taskId) return { ok: false, err: 'no_taskid' };
+        if (!taskId) return {
+            ok: false,
+            err: 'no_taskid'
+        };
         const maxAttempts = 3;
         const backoffs = [500, 1200, 2500];
 
         try {
             const res = await fetch(`/submit_review/${taskId}`, {
                 method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ action, details })
+                headers: {
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify({
+                    action,
+                    details
+                })
             });
             if (res.ok) {
-                const payload = await res.json().catch(()=>null);
-                return { ok: true, payload };
+                const payload = await res.json().catch(() => null);
+                return {
+                    ok: true,
+                    payload
+                };
             } else {
-                const txt = await res.text().catch(()=>'<no-body>');
+                const txt = await res.text().catch(() => '<no-body>');
                 console.warn('submit_review non-ok', res.status, txt);
             }
         } catch (err) {
@@ -496,10 +516,12 @@ function showSchemaApprovalPrompt(schemaText) {
             return sendReviewWithRetries(action, details, attempt + 1);
         }
 
-        return { ok: false, err: 'all_attempts_failed' };
+        return {
+            ok: false,
+            err: 'all_attempts_failed'
+        };
     }
 
-    // --- pause polling if correction UI open ---
     if (!window._pollStatusOriginal) {
         window._pollStatusOriginal = window.pollStatus;
         window.pollStatus = async function() {
@@ -508,7 +530,6 @@ function showSchemaApprovalPrompt(schemaText) {
         };
     }
 
-    // ===== ✅ OK button =====
     const okBtn = msgDiv.querySelector('#schema-ok-btn');
     okBtn.addEventListener('click', async () => {
         window.schemaPromptActive = false;
@@ -517,25 +538,19 @@ function showSchemaApprovalPrompt(schemaText) {
         if (existingCorrection) existingCorrection.remove();
         window.schemaCorrectionOpen = false;
 
-        // create optimistic user message and insert it immediately after the assistant prompt
-    //const userMsg = addChatMessage('user', '✅ Okay', msgDiv);
-    //userMsg.classList.add('local-msg', 'pending-review');
-    // attach snippet so pollStatus can re-insert in the right place later
-    //userMsg.dataset.insertAfterSnippet = getAssistantSnippet(msgDiv);
-    // move it to appear right after the assistant message (better UX)
-    //morag msgDiv.insertAdjacentElement('afterend', userMsg);
-    // Skip showing "✅ Okay" visually but keep all logic
-const userMsg = document.createElement('div');
-userMsg.classList.add('local-msg', 'pending-review');
-userMsg.dataset.insertAfterSnippet = getAssistantSnippet(msgDiv);
-
-
+        const userMsg = document.createElement('div');
+        userMsg.classList.add('local-msg', 'pending-review');
+        userMsg.dataset.insertAfterSnippet = getAssistantSnippet(msgDiv);
 
         const res = await sendReviewWithRetries('approve');
         if (res.ok) {
             userMsg.classList.remove('pending-review');
             userMsg.classList.add('confirmed-review');
-            try { await pollStatus(); } catch(e){ console.warn(e); }
+            try {
+                await pollStatus();
+            } catch (e) {
+                console.warn(e);
+            }
             if (!pollingInterval) pollingInterval = setInterval(pollStatus, 2000);
         } else {
             userMsg.classList.remove('pending-review');
@@ -552,48 +567,45 @@ userMsg.dataset.insertAfterSnippet = getAssistantSnippet(msgDiv);
             userMsg.appendChild(retryBtn);
 
             retryBtn.addEventListener('click', async () => {
-                retryBtn.disabled = true; retryBtn.textContent = 'Retrying...';
+                retryBtn.disabled = true;
+                retryBtn.textContent = 'Retrying...';
                 const r2 = await sendReviewWithRetries('approve');
                 if (r2.ok) {
                     userMsg.classList.remove('failed-notify');
                     userMsg.classList.add('confirmed-review');
-                    retryBtn.remove(); hint.remove();
-                    try { await pollStatus(); } catch(e){ console.warn(e); }
+                    retryBtn.remove();
+                    hint.remove();
+                    try {
+                        await pollStatus();
+                    } catch (e) {
+                        console.warn(e);
+                    }
                 } else {
-                    retryBtn.disabled = false; retryBtn.textContent = 'Retry notify';
+                    retryBtn.disabled = false;
+                    retryBtn.textContent = 'Retry notify';
                 }
             });
         }
     });
 
-    // ===== ❌ NOT OK button =====
     const notOkBtn = msgDiv.querySelector('#schema-notok-btn');
     notOkBtn.addEventListener('click', () => {
-        // prevent duplicates
+
         if (document.getElementById('schema-correction-area')) {
             document.getElementById('schema-correction-text').focus();
             return;
         }
 
-        // show quick local "Not okay" message
-        // morag const notOkMsg = addChatMessage('user', '❌ Not okay', msgDiv);
-        //notOkMsg.classList.add('local-msg');
-       // notOkMsg.dataset.insertAfterSnippet = getAssistantSnippet(msgDiv);
-       // msgDiv.insertAdjacentElement('afterend', notOkMsg);
-         
-       // Skip showing "❌ Not okay" visually but keep tracking context
         const notOkMsg = document.createElement('div');
         notOkMsg.classList.add('local-msg');
         notOkMsg.dataset.insertAfterSnippet = getAssistantSnippet(msgDiv);
 
-
-        // mark correction area open (pauses polling)
         window.schemaCorrectionOpen = true;
 
         const correctionArea = document.createElement('div');
         correctionArea.id = 'schema-correction-area';
         correctionArea.dataset.insertAfterSnippet = getAssistantSnippet(msgDiv);
-        correctionArea.classList.add('local-msg'); // ensure pollStatus preserves it
+        correctionArea.classList.add('local-msg');
         correctionArea.style.margin = '8px 0';
         correctionArea.innerHTML = `
             <textarea id="schema-correction-text" rows="3" style="width:100%;" placeholder="Please specify corrections..."></textarea>
@@ -606,11 +618,13 @@ userMsg.dataset.insertAfterSnippet = getAssistantSnippet(msgDiv);
         chatContainer.scrollTop = chatContainer.scrollHeight;
         document.getElementById('schema-correction-text').focus();
 
-        // --- Submit correction ---
         correctionArea.querySelector('#schema-correction-submit').addEventListener('click', async () => {
             window.schemaPromptActive = false;
             const txt = document.getElementById('schema-correction-text').value.trim();
-            if (!txt) { alert('Please enter your corrections before submitting.'); return; }
+            if (!txt) {
+                alert('Please enter your corrections before submitting.');
+                return;
+            }
 
             const userCorrectionMsg = addChatMessage('user', txt);
             userCorrectionMsg.classList.add('local-msg', 'pending-review');
@@ -622,7 +636,11 @@ userMsg.dataset.insertAfterSnippet = getAssistantSnippet(msgDiv);
             if (r.ok) {
                 userCorrectionMsg.classList.remove('pending-review');
                 userCorrectionMsg.classList.add('confirmed-review');
-                try { await pollStatus(); } catch(e){ console.warn(e); }
+                try {
+                    await pollStatus();
+                } catch (e) {
+                    console.warn(e);
+                }
                 if (!pollingInterval) pollingInterval = setInterval(pollStatus, 2000);
             } else {
                 userCorrectionMsg.classList.remove('pending-review');
@@ -640,190 +658,52 @@ userMsg.dataset.insertAfterSnippet = getAssistantSnippet(msgDiv);
                 userCorrectionMsg.appendChild(retryBtn);
 
                 retryBtn.addEventListener('click', async () => {
-                    retryBtn.disabled = true; retryBtn.textContent = 'Retrying...';
+                    retryBtn.disabled = true;
+                    retryBtn.textContent = 'Retrying...';
                     const r2 = await sendReviewWithRetries('correct', txt);
                     if (r2.ok) {
                         userCorrectionMsg.classList.remove('failed-notify');
                         userCorrectionMsg.classList.add('confirmed-review');
-                        retryBtn.remove(); hint.remove();
-                        try { await pollStatus(); } catch(e){ console.warn(e); }
+                        retryBtn.remove();
+                        hint.remove();
+                        try {
+                            await pollStatus();
+                        } catch (e) {
+                            console.warn(e);
+                        }
                     } else {
-                        retryBtn.disabled = false; retryBtn.textContent = 'Retry notify';
+                        retryBtn.disabled = false;
+                        retryBtn.textContent = 'Retry notify';
                     }
                 });
             }
         });
 
-        // --- Cancel correction ---
         correctionArea.querySelector('#schema-correction-cancel').addEventListener('click', () => {
-    window.schemaPromptActive = false;
-    correctionArea.remove();
-    window.schemaCorrectionOpen = false;
-    // Keep "❌ Not okay" visible but allow reopening correction box
-    const reopenBtn = document.createElement('button');
-    reopenBtn.className = 'btn small';
-    reopenBtn.textContent = '✏️ Reopen correction';
-    reopenBtn.style.marginLeft = '8px';
-    reopenBtn.onclick = () => {
-        reopenBtn.remove();
-        notOkBtn.click(); // triggers the correction box again
-    };
-    notOkMsg.appendChild(reopenBtn);
-    try { pollStatus(); } catch(e){ console.warn(e); }
-});
+            window.schemaPromptActive = false;
+            correctionArea.remove();
+            window.schemaCorrectionOpen = false;
 
-    });
-}
-
-
-function showScriptApprovalPrompt(type) {
-    const msg = `
-        <b>Assistant:</b><br>
-        Please review the ${type === 'create' ? 'CREATE TABLE' : 'INSERT INTO'} script.<br>
-        <div style="margin-top:8px;">
-            <button id="view-script-btn" class="btn">👁️ View Script</button>
-            <button id="approve-script-btn" class="btn">✅ Approve</button>
-        </div>
-    `;
-    const msgDiv = addChatMessage('assistant', msg);
-        // guard so pollStatus won't create another prompt while one is visible
-    //scriptApprovalShown = true;
-    msgDiv.querySelector('#view-script-btn').addEventListener('click', () => {
-        window.open(`/view_script/${taskId}/${type}`, '_blank', 'noopener');
-    });
-
-    // helper: try sending approval to server with two endpoint patterns and retries
-    async function sendApprovalWithRetries(attempt = 0) {
-        if (!taskId) {
-            console.error('No taskId available for approval');
-            return { ok: false, err: 'no_taskid' };
-        }
-
-        const endpoints = [
-            { url: `/approve_script/${taskId}/${type}`, opts: { method: 'POST' } },
-            { url: `/approve_action/${taskId}`, opts: { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action: type }) } }
-        ];
-
-        // try endpoints sequentially on each attempt
-        for (let ep of endpoints) {
+            const reopenBtn = document.createElement('button');
+            reopenBtn.className = 'btn small';
+            reopenBtn.textContent = '✏️ Reopen correction';
+            reopenBtn.style.marginLeft = '8px';
+            reopenBtn.onclick = () => {
+                reopenBtn.remove();
+                notOkBtn.click();
+            };
+            notOkMsg.appendChild(reopenBtn);
             try {
-                console.debug(`Approval attempt ${attempt+1}: POST ${ep.url}`);
-                const res = await fetch(ep.url, ep.opts);
-                if (res.ok) {
-                    const payload = await res.json().catch(()=>null);
-                    console.debug('Approval succeeded at', ep.url, 'payload=', payload);
-                    return { ok: true, url: ep.url, payload };
-                } else {
-                    const txt = await res.text().catch(()=>'<no-body>');
-                    console.warn('Approval endpoint returned non-ok', ep.url, res.status, txt);
-                    // continue to fallback endpoint
-                }
-            } catch (err) {
-                console.warn('Approval network error for', ep.url, err);
-                // continue to fallback endpoint
+                pollStatus();
+            } catch (e) {
+                console.warn(e);
             }
-        }
+        });
 
-        // if we reached here, this attempt failed — maybe retry
-        if (attempt < 2) {
-            // exponential-ish backoff
-            const backoffs = [500, 1200, 2500];
-            await new Promise(r => setTimeout(r, backoffs[attempt] || 1000));
-            return sendApprovalWithRetries(attempt + 1);
-        }
-
-        // final failure
-        return { ok: false, err: 'all_attempts_failed' };
-    }
-
-    msgDiv.querySelector('#approve-script-btn').addEventListener('click', async () => {
-        // Protect from double clicks
-        const btn = msgDiv.querySelector('#approve-script-btn');
-        btn.disabled = true;
-
-        // Immediately add optimistic local user message so user sees feedback
-       // const userMsgDiv = addChatMessage('user', '✅ Approved', msgDiv);
-       // userMsgDiv.classList.add('local-msg', 'pending-approve');
-        //userMsgDiv.dataset.insertAfterSnippet = getAssistantSnippet(msgDiv);
-        // morag msgDiv.insertAdjacentElement('afterend', userMsgDiv);
-        // Skip showing the "✅ Approved" message but keep functionality working
-        const userMsgDiv = document.createElement('div');
-        userMsgDiv.classList.add('local-msg', 'pending-approve');
-        userMsgDiv.dataset.insertAfterSnippet = getAssistantSnippet(msgDiv);
-// Not inserted into DOM — internal tracking only
-
-
-        // Attempt to notify server with retries
-        const result = await sendApprovalWithRetries(0);
-
-        if (result.ok) {
-            // success -> mark local message confirmed, re-poll to get server-side log
-            userMsgDiv.classList.remove('pending-approve');
-            userMsgDiv.classList.add('confirmed-approve');
-            try {
-                // call pollStatus() to immediately sync; if pollingInterval is stopped, restart it
-                await pollStatus();
-                if (!pollingInterval) {
-                    pollingInterval = setInterval(pollStatus, 2000);
-                }
-            } catch (err) {
-                console.warn('poll after approve failed', err);
-            }
-            if (result.ok) {
-    userMsgDiv.classList.remove('pending-approve');
-    userMsgDiv.classList.add('confirmed-approve');
-    try {
-        await pollStatus();
-        if (!pollingInterval) { pollingInterval = setInterval(pollStatus, 2000); }
-    } catch (err) { console.warn('poll after approve failed', err); }
-    // release guard so new approvals later can appear
-    scriptApprovalShown = false;
-}
-
-            
-        } else {
-            // failure -> keep local message but mark failed and present retry UI
-            userMsgDiv.classList.remove('pending-approve');
-            userMsgDiv.classList.add('failed-notify');
-
-            // show small inline retry button for this message
-            const retryBtn = document.createElement('button');
-            retryBtn.className = 'btn small';
-            retryBtn.textContent = 'Retry notify';
-            retryBtn.style.marginLeft = '8px';
-            userMsgDiv.appendChild(retryBtn);
-
-            retryBtn.addEventListener('click', async () => {
-                retryBtn.disabled = true;
-                retryBtn.textContent = 'Retrying...';
-                // attempt again
-                const r2 = await sendApprovalWithRetries(0);
-                if (r2.ok) {
-                    userMsgDiv.classList.remove('failed-notify');
-                    userMsgDiv.classList.add('confirmed-approve');
-                    retryBtn.remove();
-                    // re-sync
-                    try { await pollStatus(); } catch (e) { console.warn(e); }
-                } else {
-                    retryBtn.disabled = false;
-                    retryBtn.textContent = 'Retry notify';
-                    console.warn('Retry failed', r2.err || r2);
-                }
-            });
-
-            // set visual hint to user
-            const hint = document.createElement('span');
-            hint.className = 'muted';
-            hint.style.marginLeft = '8px';
-            hint.textContent = ' (failed to notify server)';
-            userMsgDiv.appendChild(hint);
-
-            console.warn('Approval: failed to notify server after retries');
-        }
     });
 }
 
-    async function pollStatus() {
+async function pollStatus() {
      if (window.schemaPromptActive || window.schemaCorrectionOpen) return;
     if (!taskId) return;
 
@@ -1077,16 +957,25 @@ function showScriptApprovalPrompt(type) {
 try {
     // if server wants schema review and we don't already have one shown, show it
     if (data.status === 'Awaiting user review' && !document.querySelector('#schema-ok-btn') && !window.schemaCorrectionOpen) {
-        const schemaText = data.latest_schema || '';
+        const schemaText = data.latest_schema || 'Schema not available.';
         showSchemaApprovalPrompt(schemaText);
-        submitReviewBtn.disabled = false;
     }
 
     // handle script create/insert approvals (guarded)
     const currentAwaiting = data.awaiting_approval || null;
     if (currentAwaiting && !scriptApprovalShown) {
-        showScriptApprovalPrompt(currentAwaiting);
-        // scriptApprovalShown is now set inside showScriptApprovalPrompt()
+        // derive simple keys to decide whether to show the prompt
+        const action = currentAwaiting.action || currentAwaiting;
+        const taskForAwait = currentAwaiting.task_id || taskId;
+        const whichKey = (action === 'create' ? 'create' : 'insert');
+        const actionKey = `${taskForAwait}:${whichKey}`;
+
+        // only show if this exact action hasn't been approved and the task hasn't been approved
+        if (!approvedActions[actionKey] && !approvedTasks[taskForAwait]) {
+            showScriptApprovalPrompt(currentAwaiting);
+            // mark shown to avoid re-creating listeners repeatedly
+            scriptApprovalShown = true;
+        }
     }
 
     // if server no longer needs approval, reset the guard so future approvals can show
@@ -1099,9 +988,84 @@ try {
 
 
 
-}
+       
+// Show approval UI for generated scripts (create/insert)
+function showScriptApprovalPrompt(awaiting) {
+    // awaiting is an object from server, e.g. { action: 'create', task_id: '...' }
+    try {
+        const container = document.getElementById('script-approval');
+        if (!container) return;
 
-        
+        // If no awaiting or already hidden, clear
+        if (!awaiting) {
+            container.style.display = 'none';
+            container.innerHTML = '';
+            return;
+        }
+
+        // Build a small card with Approve + View Script
+        const action = awaiting.action || awaiting; // allow string or object
+        const task = awaiting.task_id || taskId;
+        const which = action === 'create' ? 'create' : 'insert';
+
+        container.innerHTML = `
+            <div style="display:flex; gap:8px; align-items:center;">
+                <button id="approve-btn" class="btn">✅ Approve & Run (${which})</button>
+                <a id="view-script-btn" class="btn" href="/view_script/${task}/${which}" target="_blank" rel="noopener">📄 View ${which.toUpperCase()} script</a>
+            </div>
+        `;
+        container.style.display = 'block';
+
+        // Wire approve button: POST to /approve_action/<task>
+        const approveBtn = document.getElementById('approve-btn');
+        approveBtn.addEventListener('click', async () => {
+            approveBtn.disabled = true;
+            approveBtn.textContent = 'Approving...';
+            try {
+                const res = await fetch(`/approve_action/${task}`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ action: which })
+                });
+                const j = await res.json().catch(() => ({}));
+                if (res.ok) {
+                    // hide the approval UI after approval
+                    container.style.display = 'none';
+                    container.innerHTML = '';
+                    // Optionally, show a small confirmation log entry
+                    const info = document.createElement('div');
+                    info.className = 'muted';
+                    info.textContent = 'Approval sent — pipeline will resume.';
+                    logsContainer.appendChild(info);
+                    logsContainer.scrollTop = logsContainer.scrollHeight;
+                    // mark this action as approved for this task so we don't re-show it
+                    try { approvedActions[`${task}:${which}`] = true; } catch (e) { /* ignore */ }
+                    // also mark the whole task approved so subsequent pipeline steps won't prompt
+                    try { approvedTasks[task] = true; } catch (e) { /* ignore */ }
+                    // refresh status to reflect resumed pipeline
+                    try { await pollStatus(); } catch (e) { console.warn('poll after approve failed', e); }
+                } else {
+                    approveBtn.disabled = false;
+                    approveBtn.textContent = '✅ Approve & Run (' + which + ')';
+                    alert('Approval failed: ' + (j.error || j.message || 'Unknown'));
+                }
+            } catch (err) {
+                approveBtn.disabled = false;
+                approveBtn.textContent = '✅ Approve & Run (' + which + ')';
+                alert('Network error while approving: ' + err.message);
+            }
+        });
+
+        // View link opens in a new tab (anchor has target="_blank");
+        // do not hide the approval UI when the user clicks View Script.
+        // This keeps the Approve button available after previewing the script.
+
+    } catch (err) {
+        console.warn('showScriptApprovalPrompt error', err);
+    }
+}
+}
+       
 function showServerDownAlert() {
     // avoid duplicates
     if (document.querySelector('#server-down-alert')) return;
@@ -1176,9 +1140,7 @@ function stopReconnectLoop() {
     }
 }
 
- 
-
-        
+     
     </script>
 
  
