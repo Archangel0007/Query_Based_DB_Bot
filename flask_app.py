@@ -34,8 +34,6 @@ try:
     from modules.schema_Generator import generate_schema, schema_correction
     from modules.schema_Testing import run_phase1, run_phase2
     from modules.schema_Correction import correction
-    from modules.sql_Create_Generator import generate_create_script
-    from modules.sql_Insert_Generator import generate_insert_script
     from modules.sql_Create_Writer import generate_create_sql_writer_script
     from modules.reorder_create_sql import reorder_create_sql_file
     from modules.execute_sql_script import execute_sql_from_file
